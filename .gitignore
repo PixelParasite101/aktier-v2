@@ -1,21 +1,62 @@
 # Python venv
 venv/
 
-# VS Code
-.vscode/
+# VS Code (keep tasks/launch in repo; ignore local settings)
+!.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+ .vscode/settings.json
 
 # Output data (kun i outputmapper)
 /data/
 /data_*/
+# Flere outputmapper der bruges i projektet
+/data_all/
+/data_csv2_fullparquet/
+/features.parquet/
+# Feature CSV export
+/features.csv
+
+# Rebased outputs
+/rebased/
+/rebased_*/
 # ignorer run_report.json i outputmapper (kan forekomme i disse)
 /data/run_report.json
 /data_*/run_report.json
+/data_all/run_report.json
+/data_csv2_fullparquet/run_report.json
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test, lint, type caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Env files
+.env
+.env.*
+*.env
 
 # Logs
 *.log
@@ -24,3 +65,4 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini

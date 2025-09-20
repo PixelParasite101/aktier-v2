@@ -31,6 +31,23 @@ Grundlæggende:
 python fetch_history_pro.py --input aktie.csv --out data
 ```
 
+Standard kørsel (presets):
+
+```powershell
+# Hent data med gode defaults (incremental, actions, partitioneret Parquet pr. Ticker)
+python fetch_history_pro.py --preset standard
+
+# Beregn features fra standard-output og skriv både Parquet (partitioneret) og CSV
+python compute_features.py --preset standard
+
+# Lav rebased vinduer [-75,+25] med preset standard
+python make_rebased_windows.py --preset standard
+```
+
+Andre presets:
+- `python fetch_history_pro.py --preset fast`  (hurtig: incremental, uden actions, mindre batch)
+- `python fetch_history_pro.py --preset validate`  (tjek input/netværk uden download)
+
 Nyttige options:
 - `--per-ticker` Gem en fil pr. ticker
 - `--incremental` Hent kun nye datoer (byg på eksisterende filer)
@@ -45,6 +62,7 @@ Nyttige options:
 - `--only AAPL,MSFT` Begræns til udvalgte tickers
 - `--fail-on-empty N` Exit 1 hvis >N tomme tickers
 - `--log-file path` JSON-lines logfil
+ - `--preset standard|fast|validate` Forudindstillede kørsler (kan overrides af øvrige flags)
 
 ## Output
 
@@ -56,6 +74,65 @@ Nyttige options:
 ## Bemærkninger
 - CSV afrundes til `--float-dp` decimaler. Parquet bevarer fuld præcision.
 - Yahoo Finance har rate limits. Scriptet kører med batches, retries og korte pauser.
+
+### Preset-detaljer
+- fetch_history_pro.py `--preset standard` sætter som udgangspunkt:
+	- `--input aktie.csv`, `--out data_all`, `--incremental`, `--actions`, `--partition-by Ticker`, `--batch-size 30`, `--compression snappy`, `--float-dp 4` (kun CSV)
+	- Du kan override med egne flags (fx ændre `--out` eller `--float-dp`).
+- compute_features.py `--preset standard` sætter som udgangspunkt:
+	- `--input data_all/history_all_parquet` (falder tilbage til `data_all/history_all.parquet` hvis den findes),
+		`--out features.parquet`, `--partition-by Ticker`, `--csv features.csv`, `--use-adjclose`, `--float-dp 4` (kun CSV)
+	- Du kan override med egne flags.
+
+- make_rebased_windows.py `--preset standard` sætter som udgangspunkt:
+	- `--input features.parquet` (mappe eller fil), `--out rebased`, `--before 75`, `--after 25`, `--per-ticker`, `--float-dp 4`, `--format csv`
+	- Vinduer genereres pr. Ticker for hver reference-dato. Rækker hvor alle rebased-værdier er NaN (typisk ikke-handelsdage) filtreres fra.
+	- Output-kolonneorden: `Ticker, RefDate, Offset, Date, AdjClose_Rebased, Close_Rebased, MA_20_Rebased, MA_50_Rebased, MA_200_Rebased, RSI_*`
+
+### Kør uden argumenter (Run Python File)
+
+Alle tre scripts default’er til `--preset standard`, når de køres uden argumenter (fx via VS Code “Run Python File”):
+- `fetch_history_pro.py` → standard preset
+- `compute_features.py` → standard preset
+- `make_rebased_windows.py` → standard preset
+
+Du kan stadig override alle værdier ved at angive flags eksplicit.
+
+## VS Code: kør uden terminal
+
+I mappen `.vscode/` findes tasks:
+- “Fetch: preset standard”
+- “Features: preset standard”
+- “Run pipeline (presets)” (kører Fetch → Features i rækkefølge)
+- “Rebased: preset standard”
+
+Åbn kommandopalletten (Ctrl+Shift+P) → “Run Task” og vælg den ønskede task.
+
+## Rebased vinduer
+
+Scriptet `make_rebased_windows.py` genererer vinduer på [-before, +after] handelsdage omkring en reference-dato og rebaserer værdier til 100 på ref-dagen.
+
+Eksempel med standard preset:
+
+```powershell
+python make_rebased_windows.py --preset standard
+```
+
+Nyttige flags:
+- `--before 75 --after 25` (ændr løsningens vinduesstørrelse)
+- `--per-ticker` (en fil pr. ticker; default i preset standard)
+- `--format csv|parquet|both`
+- `--float-dp N` (afrund kun CSV; Parquet fuld præcision)
+
+Filtrering og kvalitet:
+- Input deduplikeres på (Ticker, Date) og sorteres.
+- Reference-rækker med 0/NaN i reference-værdier springes over (undgår division med 0).
+- Rækker hvor alle rebased-værdier er NaN (typisk ikke-handelsdage) filtreres fra i output.
+
+## Valgfrie “one-click” scripts
+
+`run_pipeline.ps1` og `run_pipeline.bat` er med for nem kørsel uden for VS Code (dobbeltklik, Task Scheduler). De er valgfrie, da
+VS Code tasks og scripts’ no-args default til `--preset standard` dækker de fleste behov.
 
 ## Licens
 MIT

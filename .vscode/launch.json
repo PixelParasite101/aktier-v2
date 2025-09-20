@@ -1,0 +1,30 @@
+{
+  // VS Code Run/Debug configurations
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run fetch (preset standard)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/fetch_history_pro.py",
+      "args": ["--preset", "standard"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run features (preset standard)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/compute_features.py",
+      "args": ["--preset", "standard"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run rebased (preset standard)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/make_rebased_windows.py",
+      "args": ["--preset", "standard"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

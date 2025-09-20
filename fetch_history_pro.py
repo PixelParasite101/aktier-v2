@@ -21,7 +21,7 @@ REPORT_NAME = "run_report.json"
 # --- CLI ---
 def parse_args():
     p = argparse.ArgumentParser(description="Hent fuld historik (1d) for aktier fra CSV med tickers.")
-    p.add_argument("--input","-i", required=True, help="CSV med kolonnen 'ticker'.")
+    p.add_argument("--input","-i", required=False, default=None, help="CSV med kolonnen 'ticker'.")
     p.add_argument("--out","-o", default="data", help="Output-mappe.")
     p.add_argument("--per-ticker", action="store_true", help="Gem én fil pr. ticker i stedet for samlet.")
     p.add_argument("--batch-size", type=int, default=30, help="Antal tickers pr. batch (yfinance multi-download).")
@@ -41,7 +41,66 @@ def parse_args():
         default=None,
         help="Antal decimaler for floats i CSV (Parquet bevarer fuld præcision).",
     )
+    p.add_argument(
+        "--preset",
+        choices=["standard", "fast", "validate"],
+        default=None,
+        help="Forudindstillet kørsel: standard|fast|validate. Manuelle flags kan stadig override.",
+    )
     return p.parse_args()
+
+# --- Preset helpers ---
+def _flag_provided(*names: str) -> bool:
+    return any(n in sys.argv for n in names)
+
+def apply_preset(args):
+    if not args.preset:
+        return args
+    preset = args.preset
+    if preset == "standard":
+        if args.input is None and not _flag_provided("--input", "-i"):
+            args.input = "aktie.csv"
+        if (args.out == "data" and not _flag_provided("--out", "-o")) or args.out is None:
+            args.out = "data_all"
+        if not _flag_provided("--incremental"):
+            args.incremental = True
+        if not _flag_provided("--actions"):
+            args.actions = True
+        if args.partition_by in (None, "") and not _flag_provided("--partition-by"):
+            args.partition_by = "Ticker"
+        if args.batch_size == 30 and not _flag_provided("--batch-size"):
+            args.batch_size = 30
+        if args.compression == "snappy" and not _flag_provided("--compression"):
+            args.compression = "snappy"
+        if args.float_dp is None and not _flag_provided("--float-dp"):
+            args.float_dp = 4
+        # keep adjusted_only default (False) unless user sets it
+        # per-ticker remains default False unless user sets it
+    elif preset == "fast":
+        if args.input is None and not _flag_provided("--input", "-i"):
+            args.input = "aktie.csv"
+        if (args.out == "data" and not _flag_provided("--out", "-o")) or args.out is None:
+            args.out = "data_all"
+        if not _flag_provided("--incremental"):
+            args.incremental = True
+        # fast: skip actions by default
+        # only set actions if user explicitly asked
+        if args.partition_by in (None, "") and not _flag_provided("--partition-by"):
+            args.partition_by = "Ticker"
+        if not _flag_provided("--batch-size"):
+            args.batch_size = 20
+        if not _flag_provided("--compression"):
+            args.compression = "snappy"
+        if args.float_dp is None and not _flag_provided("--float-dp"):
+            args.float_dp = 4
+    elif preset == "validate":
+        if args.input is None and not _flag_provided("--input", "-i"):
+            args.input = "aktie.csv"
+        if (args.out == "data" and not _flag_provided("--out", "-o")) or args.out is None:
+            args.out = "data_all"
+        if not _flag_provided("--validate-only"):
+            args.validate_only = True
+    return args
 
 # --- Utility: logging ---
 def log_event(log_file: Optional[str], event: Dict):
@@ -204,6 +263,12 @@ def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: s
 # --- Main ---
 def main():
     args = parse_args()
+    # If run without any CLI args (e.g., VS Code "Run Python File"), default to preset=standard
+    if args.preset is None and len(sys.argv) == 1:
+        args.preset = "standard"
+    args = apply_preset(args)
+    if not args.input:
+        raise SystemExit("Fejl: --input mangler. Angiv --input eller brug --preset standard/fast/validate.")
     ensure_out(args.out)
 
     # Læs tickers
