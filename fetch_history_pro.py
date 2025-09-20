@@ -2,9 +2,13 @@
 # Robust 1d-historik downloader m. retries, incremental, batch, actions, UTC, logging og rapport.
 # Krav: pip install yfinance pandas pyarrow tenacity
 
-import argparse, os, sys, json, time
+import argparse
+import json
+import os
+import sys
+import time
 from datetime import datetime, timezone
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
 import yfinance as yf
@@ -31,7 +35,12 @@ def parse_args():
     p.add_argument("--dry-run", action="store_true", help="Download i RAM, men skriv ikke til disk.")
     p.add_argument("--fail-on-empty", type=int, default=None, help="Exit 1 hvis tomme tickers > N.")
     p.add_argument("--log-file", default=None, help="Fil til JSON-lines logs (append).")
-    p.add_argument("--float-dp", type=int, default=None, help="Antal decimaler for floats i CSV; hvis sat afrundes også data inden Parquet.")
+    p.add_argument(
+        "--float-dp",
+        type=int,
+        default=None,
+        help="Antal decimaler for floats i CSV (Parquet bevarer fuld præcision).",
+    )
     return p.parse_args()
 
 # --- Utility: logging ---
@@ -275,15 +284,33 @@ def main():
                                 spl_csv_df = spl_csv_df.copy()
                                 spl_csv_df["SplitRatio"] = pd.to_numeric(spl_csv_df["SplitRatio"], errors="coerce").round(args.float_dp)
                         if not div_csv_df.empty:
-                            div_csv_df.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=csv_float_format)
+                            div_csv_df.to_csv(
+                                os.path.join(args.out, f"{t}_dividends.csv"),
+                                index=False,
+                                float_format=csv_float_format,
+                            )
                             try:
-                                acts["dividends"].to_parquet(os.path.join(args.out, f"{t}_dividends.parquet"), index=False, compression=args.compression)
-                            except Exception: pass
+                                acts["dividends"].to_parquet(
+                                    os.path.join(args.out, f"{t}_dividends.parquet"),
+                                    index=False,
+                                    compression=args.compression,
+                                )
+                            except Exception:
+                                pass
                         if not spl_csv_df.empty:
-                            spl_csv_df.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=csv_float_format)
+                            spl_csv_df.to_csv(
+                                os.path.join(args.out, f"{t}_splits.csv"),
+                                index=False,
+                                float_format=csv_float_format,
+                            )
                             try:
-                                acts["splits"].to_parquet(os.path.join(args.out, f"{t}_splits.parquet"), index=False, compression=args.compression)
-                            except Exception: pass
+                                acts["splits"].to_parquet(
+                                    os.path.join(args.out, f"{t}_splits.parquet"),
+                                    index=False,
+                                    compression=args.compression,
+                                )
+                            except Exception:
+                                pass
                 except Exception as e:
                     report["failed"].append({"ticker": t, "reason": f"actions:{e}"})
                     log_event(args.log_file, {"event":"actions_fail", "ticker": t, "error": str(e)})
@@ -299,7 +326,14 @@ def main():
         if args.incremental and existing_all is not None:
             all_df = incremental_merge(existing_all, all_df)
         if not args.dry_run:
-            save_prices(all_df, args.out, per_ticker=False, compression=args.compression, partition_by=args.partition_by, float_dp=args.float_dp)
+            save_prices(
+                all_df,
+                args.out,
+                per_ticker=False,
+                compression=args.compression,
+                partition_by=args.partition_by,
+                float_dp=args.float_dp,
+            )
 
     # Rapport
     empty_n = sum(1 for f in report["failed"] if f.get("reason") == "empty")
