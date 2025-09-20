@@ -1,0 +1,26 @@
+# Python venv
+venv/
+
+# VS Code
+.vscode/
+
+# Output data (kun i outputmapper)
+/data/
+/data_*/
+# ignorer run_report.json i outputmapper (kan forekomme i disse)
+/data/run_report.json
+/data_*/run_report.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
