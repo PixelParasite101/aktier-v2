@@ -53,6 +53,18 @@ Formål: Beskriv hvilken rækkefølge de vigtigste scripts skal afvikles i, hvil
 
   & "./venv/Scripts/python.exe" "./analog_matcher_watch.py" --watch "./watch.csv" --ref-dir "./rebased" --verbose
 
+  Yderligere nyttige flags (nyere tilføjelser):
+
+  - `--show-config` — Vis den opsamlede, resolved konfiguration og afslut (godt til debugging eller CI).
+  - `--config-out <file>` — Skriv den resolved konfiguration til en JSON-fil.
+  - `--log-file <file>` — Skriv strukturerede JSON-log-linjer til en fil ud over console-log.
+  - `--heartbeat-interval <seconds>` — Udskriv en kort "jeg lever"-linje hvert N. sekunder så du kan se processen arbejder (0=deaktiver).
+  - `--dry-run` — Kør scriptet i simuleret tilstand (ingen netværkskald eller filskrivninger). Nyttigt til at teste at systemet kører og at heartbeats vises.
+
+  Eksempel — kør analog matcher i simuleret tilstand med hyppige heartbeats og skriv en JSON-log:
+
+    & "./venv/Scripts/python.exe" "./analog_matcher_watch.py" --watch "./watch.csv" --dry-run --heartbeat-interval 2 --log-file run_report.json
+
 Kort om flowet
 
 - fetch_history_pro -> data_all/ (history)
