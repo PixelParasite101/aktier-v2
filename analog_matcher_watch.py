@@ -25,6 +25,8 @@ from typing import Iterable, List, Tuple, Dict, Optional
 
 import numpy as np
 import pandas as pd
+import logging
+import sys
 
 
 # ----------------------------- Utils -----------------------------
@@ -98,15 +100,24 @@ def fetch_stock_history_yf(ticker: str, min_trading_days: int = 300, interval: s
     df = df.reset_index().rename(columns={"Date": "Date"})
     df = _ensure_datetime(df, "Date").sort_values("Date")
     cols = [c for c in ["Date", "Open", "High", "Low", "Close", "AdjClose", "Volume"] if c in df.columns]
-    return df[cols].reset_index(drop=True)
+    df = df[cols]
+    # Deduplicate potential duplicate columns from data source quirks
+    if getattr(df.columns, "duplicated", None) is not None and df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated(keep="first")]
+    return df.reset_index(drop=True)
 
 
 def compute_mas_inplace(df: pd.DataFrame) -> None:
     if "AdjClose" not in df.columns:
         raise ValueError("AdjClose mangler i hentede data.")
-    df["MA_20"] = pd.to_numeric(df["AdjClose"], errors="coerce").rolling(20).mean()
-    df["MA_50"] = pd.to_numeric(df["AdjClose"], errors="coerce").rolling(50).mean()
-    df["MA_200"] = pd.to_numeric(df["AdjClose"], errors="coerce").rolling(200).mean()
+    # Handle rare case where selecting 'AdjClose' yields a DataFrame due to non-unique columns
+    s = df["AdjClose"]
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[:, 0]
+    s = pd.to_numeric(s, errors="coerce")
+    df["MA_20"] = s.rolling(20).mean()
+    df["MA_50"] = s.rolling(50).mean()
+    df["MA_200"] = s.rolling(200).mean()
 
 
 def _base_from_rebased_name(name: str) -> str:
@@ -123,7 +134,11 @@ def rebase_columns_inplace(df: pd.DataFrame, cols_rebased: Iterable[str]) -> Non
         base = _base_from_rebased_name(col_rebased)
         if base not in df.columns:
             raise ValueError(f"Mangler basekolonne '{base}' for '{col_rebased}'.")
-        s = pd.to_numeric(df[base], errors="coerce")
+        s_base = df[base]
+        # Handle rare non-unique column names returning a DataFrame
+        if isinstance(s_base, pd.DataFrame):
+            s_base = s_base.iloc[:, 0]
+        s = pd.to_numeric(s_base, errors="coerce")
         ref = s.iloc[-1]
         if not np.isfinite(ref) or ref == 0:
             raise ValueError(f"Kan ikke rebase '{base}': sidste værdi er NaN/0.")
@@ -304,7 +319,8 @@ def plot_matches(query_vecs: Dict[str, np.ndarray],
 
 def main():
     ap = argparse.ArgumentParser(description="Watch-list analog matching mod rebased reference-datasæt")
-    ap.add_argument("--watch", required=True, help="CSV med kolonnen 'Ticker'")
+    # Make --watch optional here; we'll auto-fill sensible defaults when run without args
+    ap.add_argument("--watch", required=False, default=None, help="CSV med kolonnen 'Ticker'")
     ap.add_argument("--ref-dir", default="rebased", help="Mappe med *rebased* per-ticker .parquet")
     ap.add_argument("--lookback", type=int, default=75, help="Antal handelsdage i query (L)")
     ap.add_argument("--horizon", type=int, default=25, help="Fremtidsdage fra reference (+1..H)")
@@ -319,7 +335,28 @@ def main():
                     help="Brug eksisterende features (features.parquet/CSV) for query i stedet for at hente fra yfinance")
     ap.add_argument("--query-features-dir", default="features.parquet",
                     help="Sti til features-parquet mappe/fil eller features.csv, når --query-from-features er sat")
+    import sys as _sys
+    ap.add_argument("-v", "--verbose", action="store_true", help="Verbose logging (debug).")
     args = ap.parse_args()
+
+    # If launched without any args (e.g., VS Code "Run Python File"), apply defaults
+    if len(_sys.argv) == 1:
+        args.watch = args.watch or "watch.csv"
+        args.ref_dir = args.ref_dir or "rebased"
+        args.lookback = args.lookback or 75
+        args.horizon = args.horizon or 25
+        args.topn = args.topn or 10
+        args.metric = args.metric or "mse"
+        args.match_cols = args.match_cols or "AdjClose_Rebased,MA_20_Rebased,MA_50_Rebased,MA_200_Rebased"
+        args.out_dir = args.out_dir or "analog_out"
+
+    if not args.watch:
+        ap.error("the following arguments are required: --watch")
+
+    # Configure logging
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(stream=sys.stdout, level=log_level, format="%(asctime)s %(levelname)s: %(message)s", datefmt="%H:%M:%S")
+    log = logging.getLogger(__name__)
 
     ref_dir = args.ref_dir
     lookback = args.lookback
@@ -339,6 +376,7 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    log.info("Starting analog matcher: watch=%s  ref_dir=%s  lookback=%d  horizon=%d", args.watch, ref_dir, lookback, horizon)
 
     # Hjælper: indlæs features for en enkelt ticker og nødvendige base-kolonner
     def _load_query_from_features(features_path: str, ticker: str, base_cols: List[str]) -> Optional[pd.DataFrame]:
@@ -398,18 +436,19 @@ def main():
     # Behandl hver query-ticker
     all_scores = []
     for q_ticker in tickers:
-        print(f"\n=== Query: {q_ticker} ===")
+        log.info("Processing query ticker: %s", q_ticker)
         # Byg query-data fra features (hvis valgt), ellers yfinance
         df: Optional[pd.DataFrame] = None
         if args.query_from_features:
             base_cols = [ _base_from_rebased_name(c) for c in match_cols ]
             df = _load_query_from_features(args.query_features_dir, q_ticker, base_cols)
             if df is None or df.empty:
-                print(f"  Kunne ikke indlæse features for {q_ticker} fra {args.query_features_dir}; falder tilbage til yfinance…")
+                log.warning("Kunne ikke indlæse features for %s fra %s; falder tilbage til yfinance", q_ticker, args.query_features_dir)
 
         if df is None:
             # Hent 200+lookback handelsdage (for at kunne beregne MA_200 korrekt)
             min_days = 200 + lookback
+            log.debug("Henter historik fra yfinance for %s (min_days=%d)", q_ticker, min_days)
             df = fetch_stock_history_yf(q_ticker, min_trading_days=min_days)
             compute_mas_inplace(df)
 
@@ -418,6 +457,7 @@ def main():
 
         # Byg query-vektorer (kun sidste lookback dage)
         query_vecs = build_query_vectors(df, lookback=lookback, match_cols=match_cols)
+        log.debug("Query vektorer bygget for %s (lookback=%d); cols=%s", q_ticker, lookback, match_cols)
 
         # Find matches mod reference
         # (brug weights ved scoring)
@@ -440,7 +480,7 @@ def main():
             futures[(q_ticker, r_ticker, pd.to_datetime(refdate))] = fut_map
 
         if not scores:
-            print(f"  Ingen gyldige referencevinduer fundet for {q_ticker}.")
+            log.warning("Ingen gyldige referencevinduer fundet for %s", q_ticker)
             continue
 
         scores.sort(key=lambda x: x[3])  # lavest først
@@ -452,7 +492,7 @@ def main():
         # Gem scores for denne query
         out_scores = out_dir / f"{_safe_filename(q_ticker)}_scores.csv"
         df_scores.to_csv(out_scores, index=False)
-        print(f"  Scores gemt: {out_scores}")
+        log.info("Scores gemt for %s: %s", q_ticker, out_scores)
 
         # Pak futures (langt format) for match_cols
         fut_rows = []
@@ -471,7 +511,7 @@ def main():
 
         out_future = out_dir / f"{_safe_filename(q_ticker)}_futures.parquet"
         df_future.to_parquet(out_future, index=False)
-        print(f"  Futures gemt: {out_future}")
+        log.info("Futures gemt for %s: %s", q_ticker, out_future)
 
         # Plot (viser første kolonne i match_cols)
         if args.plot:
@@ -479,14 +519,14 @@ def main():
                 plot_matches(query_vecs, df_future.rename(columns={"MatchTicker": "MatchTicker"}), topk=min(topn, 10),
                              plot_col=match_cols[0])
             except Exception as e:
-                print(f"  Plot fejl: {e}")
+                log.error("Plot fejl for %s: %s", q_ticker, e)
 
     # Gem samlet resume af scores (alle tickere)
     if all_scores:
         df_all = pd.concat(all_scores, ignore_index=True)
         out_all = out_dir / "all_scores.csv"
         df_all.to_csv(out_all, index=False)
-        print(f"\nSamlet score-oversigt gemt: {out_all}")
+        log.info("Samlet score-oversigt gemt: %s", out_all)
 
 
 if __name__ == "__main__":

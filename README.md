@@ -142,3 +142,35 @@ VS Code tasks og scripts’ no-args default til `--preset standard` dækker de f
 
 ## Licens
 MIT
+
+## Developer
+
+CI status: ![CI](https://github.com/PixelParasite101/aktier-v2/actions/workflows/ci.yml/badge.svg)
+
+Quick start (PowerShell):
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Run tests:
+
+```powershell
+python -m pytest -q
+```
+
+Run the standard pipeline locally (quick):
+
+```powershell
+python fetch_history_pro.py --preset standard
+python compute_features.py --preset standard
+python make_rebased_windows.py --preset standard
+```
+
+Compatibility note:
+
+- `pandas` and `pyarrow` versions must be compatible for Parquet I/O. If you see parquet read/write errors after upgrading packages, try pinning `pandas` to the version used here and upgrading/downgrading `pyarrow` accordingly. The project was tested with the versions in `requirements.txt`.
+

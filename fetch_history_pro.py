@@ -107,7 +107,8 @@ def log_event(log_file: Optional[str], event: Dict):
     if not log_file:
         return
     event = dict(event)
-    event["ts"] = datetime.utcnow().isoformat()+"Z"
+    # Use timezone-aware UTC datetime to avoid deprecation warnings; keep 'Z' suffix
+    event["ts"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
@@ -278,7 +279,8 @@ def main():
         return
 
     report = {
-        "timestamp": datetime.utcnow().isoformat()+"Z",
+        # Use timezone-aware UTC datetime to avoid deprecation warnings; keep 'Z' suffix
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "interval": DEFAULT_INTERVAL,
         "ok": [],
         "failed": [],

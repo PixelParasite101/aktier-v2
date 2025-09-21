@@ -26,5 +26,24 @@
       "args": ["--preset", "standard"],
       "console": "integratedTerminal"
     }
+    ,
+    {
+      "name": "Run analog matcher (watch)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/analog_matcher_watch.py",
+      "args": [
+        "--watch", "${workspaceFolder}/watch.csv",
+        "--ref-dir", "${workspaceFolder}/rebased",
+        "--lookback", "75",
+        "--horizon", "25",
+        "--topn", "10",
+        "--metric", "mse",
+        "--match-cols", "AdjClose_Rebased,MA_20_Rebased,MA_50_Rebased,MA_200_Rebased",
+  "--out-dir", "${workspaceFolder}/analog_out",
+  "--verbose"
+      ],
+      "console": "integratedTerminal"
+    }
   ]
 }
