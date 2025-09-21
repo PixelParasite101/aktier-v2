@@ -63,6 +63,7 @@ Nyttige options:
 - `--fail-on-empty N` Exit 1 hvis >N tomme tickers
 - `--log-file path` JSON-lines logfil
  - `--preset standard|fast|validate` Forudindstillede kørsler (kan overrides af øvrige flags)
+- `--csv-head N` og `--csv-tail N` (valgfrit) — skriv kun de første N og/eller sidste N rækker til CSV. Parquet skrives altid komplet.
 
 ## Output
 
@@ -73,6 +74,7 @@ Nyttige options:
 
 ## Bemærkninger
 - CSV afrundes til `--float-dp` decimaler. Parquet bevarer fuld præcision.
+- CSV kan begrænses med `--csv-head/--csv-tail` for hurtig inspektion (fx 1000/1000). Brug Parquet for fuld data.
 - Yahoo Finance har rate limits. Scriptet kører med batches, retries og korte pauser.
 
 ### Preset-detaljer
@@ -85,7 +87,7 @@ Nyttige options:
 	- Du kan override med egne flags.
 
 - make_rebased_windows.py `--preset standard` sætter som udgangspunkt:
-	- `--input features.parquet` (mappe eller fil), `--out rebased`, `--before 75`, `--after 25`, `--per-ticker`, `--float-dp 4`, `--format csv`
+	- `--input features.parquet` (mappe eller fil), `--out rebased`, `--before 75`, `--after 25`, `--per-ticker`, `--float-dp 4`, `--format both`, `--csv-head 1000`, `--csv-tail 1000`, `--drop-rows-if-nan any`
 	- Vinduer genereres pr. Ticker for hver reference-dato. Rækker hvor alle rebased-værdier er NaN (typisk ikke-handelsdage) filtreres fra.
 	- Output-kolonneorden: `Ticker, RefDate, Offset, Date, AdjClose_Rebased, Close_Rebased, MA_20_Rebased, MA_50_Rebased, MA_200_Rebased, RSI_*`
 
@@ -122,6 +124,10 @@ Nyttige flags:
 - `--before 75 --after 25` (ændr løsningens vinduesstørrelse)
 - `--per-ticker` (en fil pr. ticker; default i preset standard)
 - `--format csv|parquet|both`
+- `--drop-rows-if-nan none|any|all` (default i preset: any). Styr rækker med NaN i rebased-kolonner:
+	- `none` behold alle rækker
+	- `any` drop rækker hvor mindst én rebased-kolonne er NaN (preset)
+	- `all` drop rækker hvor alle rebased-kolonner er NaN
 - `--float-dp N` (afrund kun CSV; Parquet fuld præcision)
 
 Filtrering og kvalitet:
