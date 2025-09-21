@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import Iterable, List, Tuple, Dict
+from typing import Iterable, List, Tuple, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -165,8 +165,14 @@ def iter_reference_windows(ref_dir: str,
     lb_start, lb_end = -lookback + 1, 0  # eks.: -74..0 for lookback=75
 
     for fp in files:
-        df = pd.read_parquet(fp)
         needed = {"Ticker", "RefDate", "Offset"} | set(match_cols)
+        # Læs kun nødvendige kolonner (Parquet kolonneprojektion)
+        try:
+            df = pd.read_parquet(fp, columns=list(needed))
+        except Exception:
+            # Fallback: læs hele filen og subsettér
+            df = pd.read_parquet(fp)
+            df = df[[c for c in df.columns if c in needed]]
         if not needed.issubset(df.columns):
             # Spring filer over, der ikke matcher schemaet
             continue
@@ -309,6 +315,10 @@ def main():
     ap.add_argument("--weights", default="", help="Komma-sep. vægte til match-cols (default: alle 1.0)")
     ap.add_argument("--out-dir", default="analog_out", help="Outputmappe til scores/futures")
     ap.add_argument("--plot", action="store_true", help="Vis plot for hver query (plotter første col i --match-cols)")
+    ap.add_argument("--query-from-features", action="store_true",
+                    help="Brug eksisterende features (features.parquet/CSV) for query i stedet for at hente fra yfinance")
+    ap.add_argument("--query-features-dir", default="features.parquet",
+                    help="Sti til features-parquet mappe/fil eller features.csv, når --query-from-features er sat")
     args = ap.parse_args()
 
     ref_dir = args.ref_dir
@@ -330,16 +340,80 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Hjælper: indlæs features for en enkelt ticker og nødvendige base-kolonner
+    def _load_query_from_features(features_path: str, ticker: str, base_cols: List[str]) -> Optional[pd.DataFrame]:
+        p = Path(features_path)
+        use_cols = ["Ticker", "Date"] + sorted(set(base_cols))
+        if p.is_dir():
+            # Prøv parti under Ticker=<ticker>
+            part_dir = p / f"Ticker={ticker}"
+            if not part_dir.exists():
+                return None
+            files = sorted(part_dir.glob("*.parquet"))
+            if not files:
+                return None
+            dfs = []
+            for fp in files:
+                try:
+                    dfp = pd.read_parquet(fp, columns=[c for c in use_cols if c != "Ticker"])  # Ticker er implicit
+                except Exception:
+                    dfp = pd.read_parquet(fp)
+                    dfp = dfp[[c for c in dfp.columns if c in use_cols or c == "Date"]]
+                # Sikr Ticker-kolonne findes
+                if "Ticker" not in dfp.columns:
+                    dfp["Ticker"] = ticker
+                dfs.append(dfp)
+            if not dfs:
+                return None
+            df = pd.concat(dfs, ignore_index=True)
+            df = df[df["Ticker"] == ticker]
+        else:
+            # Fil: parquet eller csv
+            if p.suffix.lower() == ".parquet":
+                try:
+                    df = pd.read_parquet(p, columns=use_cols)
+                except Exception:
+                    df = pd.read_parquet(p)
+                    df = df[[c for c in df.columns if c in use_cols]]
+            elif p.suffix.lower() == ".csv":
+                try:
+                    df = pd.read_csv(p, usecols=lambda c: c in use_cols)
+                except Exception:
+                    df = pd.read_csv(p)
+                    df = df[[c for c in df.columns if c in use_cols]]
+            else:
+                return None
+            df = df[df["Ticker"] == ticker]
+
+        if df is None or df.empty:
+            return None
+        df = _ensure_datetime(df, "Date").dropna(subset=["Date"]).sort_values("Date")
+        df = df.drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
+        # Numerisk koercion for base-kolonner
+        for c in base_cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df
+
     # Behandl hver query-ticker
     all_scores = []
     for q_ticker in tickers:
         print(f"\n=== Query: {q_ticker} ===")
-        # Hent 200+lookback handelsdage (for at kunne beregne MA_200 korrekt)
-        min_days = 200 + lookback
-        df = fetch_stock_history_yf(q_ticker, min_trading_days=min_days)
-        compute_mas_inplace(df)
+        # Byg query-data fra features (hvis valgt), ellers yfinance
+        df: Optional[pd.DataFrame] = None
+        if args.query_from_features:
+            base_cols = [ _base_from_rebased_name(c) for c in match_cols ]
+            df = _load_query_from_features(args.query_features_dir, q_ticker, base_cols)
+            if df is None or df.empty:
+                print(f"  Kunne ikke indlæse features for {q_ticker} fra {args.query_features_dir}; falder tilbage til yfinance…")
 
-        # Rebase de kolonner vi matcher på
+        if df is None:
+            # Hent 200+lookback handelsdage (for at kunne beregne MA_200 korrekt)
+            min_days = 200 + lookback
+            df = fetch_stock_history_yf(q_ticker, min_trading_days=min_days)
+            compute_mas_inplace(df)
+
+        # Rebase de kolonner vi matcher på (baseret på sidste dato i datasættet)
         rebase_columns_inplace(df, cols_rebased=match_cols)
 
         # Byg query-vektorer (kun sidste lookback dage)
