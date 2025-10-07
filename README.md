@@ -97,6 +97,8 @@ Alle tre scripts default’er til `--preset standard`, når de køres uden argum
 - `fetch_history_pro.py` → standard preset
 - `compute_features.py` → standard preset
 - `make_rebased_windows.py` → standard preset
+ - `reference_index.py` → standard preset (bygger signatur-index)
+ - `analog_matcher_watch.py` → standard preset (forsøger også automatisk `--use-index` hvis `rebased_index.parquet` findes)
 
 Du kan stadig override alle værdier ved at angive flags eksplicit.
 
@@ -162,15 +164,99 @@ Run tests:
 python -m pytest -q
 ```
 
+--
+
+Tip: vis den endelige konfiguration uden at køre scriptet
+-----------------------------------------------------
+
+Hvert hovedscript (fetch_history_pro.py, compute_features.py, make_rebased_windows.py, reference_index.py, analog_matcher_watch.py)
+har et `--show-config` flag. Det printer den endelige, resolved konfiguration (efter at en `--preset` er anvendt og overrides er lagt på)
+som JSON til stdout og exit, uden at udføre I/O.
+
+Eksempel (PowerShell):
+
+```powershell
+& 'venv\Scripts\python.exe' .\fetch_history_pro.py --show-config
+```
+
+Det er nyttigt til CI/debugging, så man hurtigt kan se hvilke paths og indstillinger et preset
+vil bruge uden at downloade noget.
+
 Run the standard pipeline locally (quick):
 
 ```powershell
 python fetch_history_pro.py --preset standard
 python compute_features.py --preset standard
 python make_rebased_windows.py --preset standard
+python reference_index.py --preset standard
+python analog_matcher_watch.py --preset standard --watch watch.csv
 ```
 
 Compatibility note:
 
 - `pandas` and `pyarrow` versions must be compatible for Parquet I/O. If you see parquet read/write errors after upgrading packages, try pinning `pandas` to the version used here and upgrading/downgrading `pyarrow` accordingly. The project was tested with the versions in `requirements.txt`.
+
+### Signatur index (reference_index.py)
+
+Bygger et kompakt signatur-index over rebased vinduer for hurtig prefilter af kandidater før fuld analog matching.
+
+Standard preset (`--preset standard` eller ingen args):
+```powershell
+python reference_index.py --preset standard
+```
+Flags:
+- `--rebased-dir rebased` (mappe med *_rebased.parquet filer)
+- `--out rebased_index.parquet` (enkelt parquet med index)
+- `--match-cols ...` Kolonner der skal have signaturer (`*_sig` og z-normaliserede `*_sig_z` til corr)
+- `--lookback 75` Lookback længde (skal matche analog matcher)
+- `--sig-downsample 8` Downsampled signatur længde
+- `--show-config` Print config og exit
+
+Output kolonner (uddrag):
+- `Ticker, RefDate, SourceFile, Lookback, SigSize`
+- `<col>_sig`, `<col>_sig_z` (liste af floats), `<col>_mean`, `<col>_std`
+
+Metadata: Skrives til mappe `<out_stem>_meta/` (fx `rebased_index_meta/_meta.json`).
+
+### Analog matcher (analog_matcher_watch.py)
+
+Matcher seneste lookback-dage for tickers i `watch.csv` mod historiske rebased vinduer og gemmer top matches + deres futures.
+
+Standard preset (`--preset standard` eller ingen args) sætter fornuftige defaults og forsøger automatisk `--use-index` hvis `rebased_index.parquet` findes.
+
+Eksempel:
+```powershell
+python analog_matcher_watch.py --preset standard --watch watch.csv
+```
+
+Vigtige flags:
+- `--use-index` Tving brug af index (deaktiveret hvis fil mangler)
+- `--index-file rebased_index.parquet` Sti til index
+- `--prefilter-topk 500` Kandidater efter prefilter
+- `--sig-downsample 8` Skal matche index
+- `--score-workers N` Tråde for vectoriseret scoring
+- `--metric mse|corr` (hvis corr: Score=1-corr og optional `--min-corr` filter)
+- `--query-from-features` Brug eksisterende features i stedet for yfinance
+- `--plot` Plot resultater (matplotlib)
+
+Output:
+- Per query ticker: `{TICKER}_scores.csv` (Score, MatchTicker, RefDate, SourceFile, evtl. Corr)
+- Futures: `{TICKER}_futures.parquet` (langt format med FutureOffset og de valgte kolonner)
+- Aggregation: `all_scores.csv`
+ - Metadata: `analog_out/_meta.json`
+
+Automatisk index brug: Når `--preset standard` anvendes (eller scriptet køres uden args), og `rebased_index.parquet` findes, aktiveres `--use-index` automatisk. Hvis index mangler, logges en advarsel og der scannes fuldt.
+
+### Metadata konvention
+
+Alle komponenter skriver et `_meta.json` med tidsstempel, git commit (hvis muligt) og den resolved konfiguration.
+
+Placeringer:
+- Fetch: `data_all/_meta.json` (eller valgt `--out`)
+- Features: `features.parquet/_meta.json` (eller valgt `--out` mappe/fil parent)
+- Rebased: `rebased/_meta.json`
+- Index: `rebased_index_meta/_meta.json` (mappe dannes fra output filens stem + `_meta`)
+- Analog matcher: `analog_out/_meta.json`
+
+Brug: gør det let at auditere hvilken konfiguration en given artefakt blev produceret med. Du kan parse filerne i CI for at gemme build-info eller lave reproducerbare runs.
 

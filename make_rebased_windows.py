@@ -3,6 +3,9 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
+from utils.common import round_for_csv, write_metadata
+import logging
+logger = logging.getLogger("aktier.rebased")
 
 def parse_args():
     p = argparse.ArgumentParser(description="Lav rebaset vinduer [-50,+50] handelsdage for hver ref-dag")
@@ -45,6 +48,17 @@ def parse_args():
         ),
     )
     p.add_argument("--preset", choices=["standard"], default=None, help="Forudindstillet kørsel: standard")
+    p.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Print den endelige konfiguration (efter preset) som JSON og exit.",
+    )
+    p.add_argument(
+        "--config-out",
+        default=None,
+        help="Hvis sat: skriv den resolved konfiguration som JSON til denne fil og exit.",
+    )
+    p.add_argument("--log-file", default=None, help="JSON-lines logfil (append).")
     return p.parse_args()
 
 def _flag_provided(*names: str) -> bool:
@@ -203,6 +217,21 @@ def main():
     if args.preset is None and len(_sys.argv) == 1:
         args.preset = "standard"
     args = apply_preset(args)
+    # initialise logging handlers (console + optional JSON file)
+    try:
+        from utils.log import init_logging
+        init_logging(getattr(args, "log_file", None))
+    except Exception:
+        pass
+    # If user requested to only show the resolved config, print and exit before any I/O
+    if getattr(args, "show_config", False):
+        import json as _json
+        cfg = _json.dumps(vars(args), default=str, sort_keys=True, ensure_ascii=False, indent=2)
+        print(cfg)
+        if getattr(args, "config_out", None):
+            with open(args.config_out, "w", encoding="utf-8") as _f:
+                _f.write(cfg)
+        return
     if not args.input:
         raise SystemExit("Fejl: --input mangler. Angiv --input eller brug --preset standard.")
     if not args.out:
@@ -227,14 +256,8 @@ def main():
         if args.per_ticker:
             if args.format in ("csv","both"):
                 out_file = Path(args.out) / f"{ticker}_rebased.csv"
-                csv_float_format = None
-                df_csv = rebased
-                if args.float_dp is not None:
-                    csv_float_format = f"%.{args.float_dp}f"
-                    num_cols = [c for c in df_csv.columns if pd.api.types.is_numeric_dtype(df_csv[c])]
-                    if num_cols:
-                        df_csv = df_csv.copy()
-                        df_csv[num_cols] = df_csv[num_cols].apply(pd.to_numeric, errors="coerce").round(args.float_dp)
+                num_cols = [c for c in rebased.columns if pd.api.types.is_numeric_dtype(rebased[c])]
+                df_csv, csv_float_format = round_for_csv(rebased, args.float_dp, include_cols=num_cols)
                 # CSV sampling: keep only head/tail if requested
                 if args.csv_head is not None or args.csv_tail is not None:
                     h = max(0, args.csv_head or 0)
@@ -259,14 +282,8 @@ def main():
         combined = order_columns(pd.concat(all_out, ignore_index=True))
         if args.format in ("csv","both"):
             out_file = Path(args.out) / "rebased_all.csv"
-            csv_float_format = None
-            df_csv = combined
-            if args.float_dp is not None:
-                csv_float_format = f"%.{args.float_dp}f"
-                num_cols = [c for c in df_csv.columns if pd.api.types.is_numeric_dtype(df_csv[c])]
-                if num_cols:
-                    df_csv = df_csv.copy()
-                    df_csv[num_cols] = df_csv[num_cols].apply(pd.to_numeric, errors="coerce").round(args.float_dp)
+            num_cols = [c for c in combined.columns if pd.api.types.is_numeric_dtype(combined[c])]
+            df_csv, csv_float_format = round_for_csv(combined, args.float_dp, include_cols=num_cols)
             # CSV sampling for combined as well
             if args.csv_head is not None or args.csv_tail is not None:
                 h = max(0, args.csv_head or 0)
@@ -284,6 +301,11 @@ def main():
             out_pq = Path(args.out) / "rebased_all.parquet"
             combined.to_parquet(out_pq, index=False, compression="snappy")
             print(f"Saved combined Parquet with {len(combined)} rows to {out_pq}")
+    # Metadata
+    try:
+        write_metadata(args.out, name="rebased", args=args, extra={"before": args.before, "after": args.after})
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()

@@ -13,6 +13,10 @@ from typing import Dict, List, Optional
 import pandas as pd
 import yfinance as yf
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
+from utils.log import logger as root_logger
+import logging
+logger = logging.getLogger("aktier.fetch")
+from utils.common import round_for_csv, write_metadata
 
 # --- Konstanter ---
 DEFAULT_INTERVAL = "1d"  # låst til 1d ifølge krav
@@ -46,6 +50,16 @@ def parse_args():
         choices=["standard", "fast", "validate"],
         default=None,
         help="Forudindstillet kørsel: standard|fast|validate. Manuelle flags kan stadig override.",
+    )
+    p.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Print den endelige konfiguration (efter preset) som JSON og exit.",
+    )
+    p.add_argument(
+        "--config-out",
+        default=None,
+        help="Hvis sat: skriv den resolved konfiguration som JSON til denne fil og exit.",
     )
     return p.parse_args()
 
@@ -129,7 +143,7 @@ def read_table(path: str, only: Optional[str]) -> List[str]:
         tickers = [t for t in tickers if t in wanted]
         missing = wanted - set(tickers)
         if missing:
-            sys.stderr.write(f"Advarsel: disse 'only' fandtes ikke i input: {sorted(missing)}\n")
+            logger.warning("disse 'only' fandtes ikke i input: %s", sorted(missing))
     if not tickers:
         raise ValueError("Ingen gyldige tickers i CSV.")
     return tickers
@@ -182,7 +196,8 @@ def incremental_merge(existing: Optional[pd.DataFrame], new_df: pd.DataFrame) ->
     if existing is None or existing.empty:
         return new_df
     all_df = pd.concat([existing, new_df], ignore_index=True)
-    all_df = all_df.drop_duplicates(subset=["Ticker","Date"]).sort_values(["Ticker","Date"])
+    # Keep the last occurrence so new_df overwrites existing rows with same (Ticker,Date)
+    all_df = all_df.drop_duplicates(subset=["Ticker","Date"], keep="last").sort_values(["Ticker","Date"])
     return all_df
 
 # --- Actions (udbytter/splits) ---
@@ -226,16 +241,9 @@ def batch_download(tickers: List[str]) -> Dict[str, pd.DataFrame]:
 
 # --- Gemning ---
 def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: str, partition_by: Optional[str], float_dp: Optional[int]):
-    # Afrunding af numeriske prisfelter hvis ønsket (KUN til CSV)
-    csv_float_format = None
-    df_csv = df
-    if float_dp is not None:
-        csv_float_format = f"%.{float_dp}f"
-        cols_to_round = [c for c in ["Open","High","Low","Close","AdjClose"] if c in df.columns]
-        if cols_to_round:
-            df_csv = df.copy()
-            for c in cols_to_round:
-                df_csv[c] = pd.to_numeric(df_csv[c], errors="coerce").round(float_dp)
+    # Afrunding (kun til CSV) via fælles helper
+    cols_to_round = [c for c in ["Open","High","Low","Close","AdjClose"] if c in df.columns]
+    df_csv, csv_float_format = round_for_csv(df, float_dp, include_cols=cols_to_round)
     if per_ticker:
         # forventer kun én ticker pr. df
         tick = df_csv["Ticker"].iloc[0]
@@ -244,7 +252,8 @@ def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: s
             # Parquet gemmes i fuld præcision
             df.to_parquet(os.path.join(out_dir, f"{tick}.parquet"), index=False, compression=compression)
         except Exception as e:
-            sys.stderr.write(f"Parquet-fejl for {tick}: {e}\n")
+            logger.error("Parquet-fejl for %s: %s", tick, e)
+            log_event(None, {"event": "parquet_fail_per_ticker", "ticker": tick, "error": str(e)})
         return
     # samlet
     csv_path = os.path.join(out_dir, "history_all.csv")
@@ -259,7 +268,8 @@ def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: s
             # Parquet gemmes i fuld præcision
             df.to_parquet(pq_path, index=False, compression=compression)
     except Exception as e:
-        sys.stderr.write(f"Parquet-fejl (samlet): {e}\n")
+        logger.error("Parquet-fejl (samlet): %s", e)
+        log_event(None, {"event": "parquet_fail_combined", "error": str(e)})
 
 # --- Main ---
 def main():
@@ -268,6 +278,21 @@ def main():
     if args.preset is None and len(sys.argv) == 1:
         args.preset = "standard"
     args = apply_preset(args)
+    # initialise logging handlers (console + optional JSON file)
+    try:
+        from utils.log import init_logging
+        init_logging(args.log_file)
+    except Exception:
+        pass
+    # If user requested to only show the resolved config, print and exit before any I/O
+    if getattr(args, "show_config", False):
+        # vars may contain non-serializable objects; use default=str
+        cfg_json = json.dumps(vars(args), default=str, sort_keys=True, ensure_ascii=False, indent=2)
+        print(cfg_json)
+        if args.config_out:
+            with open(args.config_out, "w", encoding="utf-8") as _f:
+                _f.write(cfg_json)
+        return
     if not args.input:
         raise SystemExit("Fejl: --input mangler. Angiv --input eller brug --preset standard/fast/validate.")
     ensure_out(args.out)
@@ -362,8 +387,11 @@ def main():
                                     index=False,
                                     compression=args.compression,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                # Log parquet write errors for diagnostics
+                                msg = f"Parquet-fejl (dividends) for {t}: {e}\n"
+                                logger.error(msg.strip())
+                                log_event(args.log_file, {"event": "parquet_fail_dividends", "ticker": t, "error": str(e)})
                         if not spl_csv_df.empty:
                             spl_csv_df.to_csv(
                                 os.path.join(args.out, f"{t}_splits.csv"),
@@ -376,8 +404,10 @@ def main():
                                     index=False,
                                     compression=args.compression,
                                 )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                msg = f"Parquet-fejl (splits) for {t}: {e}\n"
+                                logger.error(msg.strip())
+                                log_event(args.log_file, {"event": "parquet_fail_splits", "ticker": t, "error": str(e)})
                 except Exception as e:
                     report["failed"].append({"ticker": t, "reason": f"actions:{e}"})
                     log_event(args.log_file, {"event":"actions_fail", "ticker": t, "error": str(e)})
@@ -419,6 +449,12 @@ def main():
     if not args.dry_run:
         with open(os.path.join(args.out, REPORT_NAME), "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
+
+    # Metadata (best effort)
+    try:
+        write_metadata(args.out, name="fetch", args=args, extra={"summary": report.get("summary", {})})
+    except Exception:
+        pass
 
     print(f"Færdig. OK: {len(report['ok'])}  Fejl: {len(report['failed'])}  Output: {args.out}")
     if args.fail_on_empty is not None and empty_n > args.fail_on_empty:

@@ -9,6 +9,9 @@ from typing import List, Optional
 
 import numpy as np
 import pandas as pd
+from utils.common import round_for_csv, write_metadata
+import logging
+logger = logging.getLogger("aktier.features")
 
 def parse_args():
     p = argparse.ArgumentParser(description="Beregn MA og RSI på aktiedata pr. ticker.")
@@ -34,6 +37,17 @@ def parse_args():
         default=None,
         help="Forudindstillet kørsel: standard. Manuelle flags kan stadig override.",
     )
+    p.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Print den endelige konfiguration (efter preset) som JSON og exit.",
+    )
+    p.add_argument(
+        "--config-out",
+        default=None,
+        help="Hvis sat: skriv den resolved konfiguration som JSON til denne fil og exit.",
+    )
+    p.add_argument("--log-file", default=None, help="JSON-lines logfil (append).")
     return p.parse_args()
 
 def _flag_provided(*names: str) -> bool:
@@ -158,6 +172,21 @@ def main():
     if args.preset is None and len(_sys.argv) == 1:
         args.preset = "standard"
     args = apply_preset(args)
+    # initialise logging handlers (console + optional JSON file)
+    try:
+        from utils.log import init_logging
+        init_logging(getattr(args, "log_file", None))
+    except Exception:
+        pass
+    # If user requested to only show the resolved config, print and exit before any I/O
+    if getattr(args, "show_config", False):
+        import json as _json
+        cfg = _json.dumps(vars(args), default=str, sort_keys=True, ensure_ascii=False, indent=2)
+        print(cfg)
+        if args.config_out:
+            with open(args.config_out, "w", encoding="utf-8") as _f:
+                _f.write(cfg)
+        return
     if not args.input:
         raise SystemExit("Fejl: --input mangler. Angiv --input eller brug --preset standard.")
     if not args.out:
@@ -181,27 +210,19 @@ def main():
 
     # (Valgfrit) CSV
     if args.csv:
-        # Hvis out er en mappe (partitioneret), giver CSV mening som én samlet fil
-        # Bemærk: kan fylde meget for store datasæt
-        csv_float_format = None
-        feats_csv = feats
-        if args.float_dp is not None:
-            csv_float_format = f"%.{args.float_dp}f"
-            # afrund numeriske kolonner (inkl. inputpriser og beregnede indikatorer)
-            numeric_cols = [
-                c for c in feats.columns
-                if pd.api.types.is_numeric_dtype(feats[c])
-            ]
-            if numeric_cols:
-                feats_csv = feats.copy()
-                feats_csv[numeric_cols] = feats_csv[numeric_cols].apply(pd.to_numeric, errors="coerce").round(args.float_dp)
-        # Sikr samme kolonneorden i CSV
+        numeric_cols = [c for c in feats.columns if pd.api.types.is_numeric_dtype(feats[c])]
+        feats_csv, csv_float_format = round_for_csv(feats, args.float_dp, include_cols=numeric_cols)
         feats_csv = order_columns(feats_csv)
         feats_csv.to_csv(args.csv, index=False, float_format=csv_float_format)
 
     # Lille konsol-opsummering
     cols_added = [c for c in feats.columns if c.startswith("MA_") or c.startswith("RSI_")]
     tickers_n = feats["Ticker"].nunique()
+    try:
+        write_metadata(os.path.dirname(args.out) if not os.path.isdir(args.out) else args.out, name="features", args=args,
+                       extra={"tickers": tickers_n, "indicators": cols_added})
+    except Exception:
+        pass
     print(f"OK. Tickers: {tickers_n}  Nye kolonner: {cols_added}")
 
 if __name__ == "__main__":
