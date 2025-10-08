@@ -13,9 +13,16 @@ proj_root = os.path.dirname(os.path.dirname(__file__))
 if proj_root not in sys.path:
     sys.path.insert(0, proj_root)
 import argparse
-import sys
 import pandas as pd
 import numpy as np
+from pathlib import Path
+import sys
+from numpy.lib.stride_tricks import sliding_window_view
+
+
+class FlatVectorizeError(Exception):
+    """Custom exception for flat_vectorize errors (helpers shouldn't sys.exit())."""
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -56,6 +63,9 @@ def apply_preset(args):
             args.features = ["AdjClose_Rebased", "MA_20_Rebased", "RSI_14"]
         if not _flag_provided("--window"):
             args.window = 75
+        # enable auto-window by default for the standard preset unless user specified otherwise
+        if not _flag_provided("--auto-window"):
+            args.auto_window = True
         if not _flag_provided("--all-refdates"):
             args.all_refdates = True
     return args
@@ -119,10 +129,10 @@ def flatten_row(X: np.ndarray):
 def process_single(df, args):
     g = select_group(df, args.ticker, args.refdate)
     if g.empty:
-        sys.exit("Ingen rækker matcher det valgte filter (--ticker/--refdate).")
+        raise FlatVectorizeError("Ingen rækker matcher det valgte filter (--ticker/--refdate).")
     X, n = window_from_group(g, args.features, args.window, args.require_consecutive)
     if X is None:
-        sys.exit(f"Kun {n} rækker i vindue – mindre end ønsket {args.window}. Prøv uden --require-consecutive eller brug kortere --window.")
+        raise FlatVectorizeError(f"Kun {n} rækker i vindue – mindre end ønsket {args.window}. Prøv uden --require-consecutive eller brug kortere --window.")
     X = scale_window(X, args.scale)
     v = flatten_row(X)
     meta = {
@@ -138,30 +148,82 @@ def process_single(df, args):
     print(f"Skrev 1 vektor ({len(v)} dim) til {args.out}")
 
 def process_all(df, args):
+    out_df = collect_flat_vectors(df, args.features, args.window, args.require_consecutive, args.scale)
+    if out_df is None or out_df.empty:
+        sys.exit("Ingen grupper havde nok data til at danne et vindue.")
+    out_df = out_df.sort_values(["Ticker", "RefDate"])
+    out_df.to_csv(args.out, index=False)
+    print(f"Skrev {len(out_df)} flade vektorer (hver på {args.window*len(args.features)} dim) til {args.out}")
+
+
+def _vectorized_group_windows(g: pd.DataFrame, features, window: int):
+    """Try to generate windows for a single group using numpy sliding_window_view.
+    Only works reliably when offsets form a consecutive integer sequence (step=1).
+    Returns list of 2D arrays (each window) or empty list.
+    """
+    # ensure sorted by Offset
+    g = g.sort_values(["Offset", "Date"], ascending=[True, True])
+    if "Offset" not in g.columns:
+        return []
+    offs = g["Offset"].to_numpy()
+    # check consecutive with step 1
+    if len(offs) < window:
+        return []
+    diffs = np.diff(offs)
+    if not np.all(diffs == 1):
+        return []
+
+    # build sliding windows for features
+    arrs = [g[f].to_numpy(dtype=float) for f in features]
+    stacked = np.column_stack(arrs)  # shape (N, F)
+    try:
+        sw = sliding_window_view(stacked, (window, stacked.shape[1]))
+        # sliding_window_view with 2D window returns shape (N-window+1, 1, window, F)
+        # reshape to (num_windows, window, F)
+        sw = sw[:, 0, :, :]
+    except Exception:
+        # fallback manual
+        sw = np.array([stacked[i : i + window] for i in range(len(stacked) - window + 1)])
+
+    return list(sw)
+
+
+def collect_flat_vectors(df: pd.DataFrame, features, window: int, require_consecutive: bool, scale_mode: str):
+    """Collect flattened vectors from all (Ticker, RefDate) groups and return DataFrame.
+    Tries a vectorized path per group when offsets are consecutive; otherwise falls back to window_from_group.
+    """
     rows = []
     group_cols = ["Ticker", "RefDate"]
     for (tic, rd), g in df.groupby(group_cols):
-        X, n = window_from_group(g, args.features, args.window, args.require_consecutive)
+        # Attempt vectorized extraction when consecutive offsets are present and require_consecutive is True
+        if require_consecutive:
+            windows = _vectorized_group_windows(g, features, window)
+            if not windows:
+                continue
+            # vectorized_group_windows returns all possible windows; keep first complete window to match original behavior
+            X = windows[0]
+            Xs = scale_window(X, scale_mode)
+            v = flatten_row(Xs)
+            row = {"Ticker": tic, "RefDate": rd, "Window": window, "Features": "|".join(features), "Scale": scale_mode}
+            for i, val in enumerate(v):
+                row[f"v{i}"] = val
+            rows.append(row)
+            continue
+
+        # fallback behavior for non-require_consecutive or non-consecutive offsets: use existing window_from_group
+        X, n = window_from_group(g, features, window, require_consecutive)
         if X is None:
             continue
-        Xs = scale_window(X, args.scale)
+        Xs = scale_window(X, scale_mode)
         v = flatten_row(Xs)
-        row = {
-            "Ticker": tic,
-            "RefDate": rd,
-            "Window": args.window,
-            "Features": "|".join(args.features),
-            "Scale": args.scale,
-        }
+        row = {"Ticker": tic, "RefDate": rd, "Window": window, "Features": "|".join(features), "Scale": scale_mode}
         for i, val in enumerate(v):
             row[f"v{i}"] = val
         rows.append(row)
 
     if not rows:
-        sys.exit("Ingen grupper havde nok data til at danne et vindue.")
-    out = pd.DataFrame(rows).sort_values(group_cols)
-    out.to_csv(args.out, index=False)
-    print(f"Skrev {len(out)} flade vektorer (hver på {args.window*len(args.features)} dim) til {args.out}")
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
 
 def main():
     args = parse_args()
@@ -208,6 +270,13 @@ def main():
     check_columns(df, ["Ticker", "RefDate", "Offset", "Date"])
     check_columns(df, args.features)
 
+    # Ensure feature columns are numeric (coerce if needed)
+    for f in args.features:
+        try:
+            df[f] = pd.to_numeric(df[f], errors="coerce")
+        except Exception:
+            raise FlatVectorizeError(f"Feature column {f} could not be converted to numeric")
+
     # Auto-detect window from offset range if requested
     if args.auto_window:
         if "Offset" in df.columns:
@@ -220,59 +289,40 @@ def main():
             print("WARN: Offset-kolonne mangler; kan ikke auto-detecte window.")
 
     if args.all_refdates:
-        out_df = None
-        # process_all returns by writing to disk; refactor to return dataframe instead for reuse
-        rows = []
-        group_cols = ["Ticker", "RefDate"]
-        for (tic, rd), g in df.groupby(group_cols):
-            X, n = window_from_group(g, args.features, args.window, args.require_consecutive)
-            if X is None:
-                continue
-            Xs = scale_window(X, args.scale)
-            v = flatten_row(Xs)
-            row = {
-                "Ticker": tic,
-                "RefDate": rd,
-                "Window": args.window,
-                "Features": "|".join(args.features),
-                "Scale": args.scale,
-            }
-            for i, val in enumerate(v):
-                row[f"v{i}"] = val
-            rows.append(row)
-
-        if not rows:
-            raise SystemExit("Ingen grupper havde nok data til at danne et vindue.")
-        out_df = pd.DataFrame(rows).sort_values(group_cols)
+        out_df = collect_flat_vectors(df, args.features, args.window, args.require_consecutive, args.scale)
+        if out_df is None or out_df.empty:
+            raise FlatVectorizeError("Ingen grupper havde nok data til at danne et vindue.")
 
         # write parquet full
+        out_path = args.out
+        out_p = Path(out_path)
+        if out_p.suffix == '':
+            # treat as directory
+            out_p_dir = out_p
+            out_p_dir.mkdir(parents=True, exist_ok=True)
+            pq_path = out_p_dir / "flat_vectors.parquet"
+            csv_path = out_p_dir / "flat_vectors.csv"
+        else:
+            pq_path = out_p.with_suffix('.parquet')
+            csv_path = out_p.with_suffix('.csv')
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+
         try:
-            out_path = args.out
-            out_p = Path(out_path)
-            if out_p.suffix == '':
-                # treat as directory
-                out_p_dir = out_p
-                out_p_dir.mkdir(parents=True, exist_ok=True)
-                pq_path = out_p_dir / "flat_vectors.parquet"
-                csv_path = out_p_dir / "flat_vectors.csv"
-            else:
-                pq_path = out_p.with_suffix('.parquet')
-                csv_path = out_p.with_suffix('.csv')
-                out_p.parent.mkdir(parents=True, exist_ok=True)
             out_df.to_parquet(pq_path, index=False, compression="snappy")
-            # CSV: first 1000 + last 1000 rows
-            n = len(out_df)
-            if n <= 2000:
-                csv_df = out_df
-            else:
-                head = out_df.head(1000)
-                tail = out_df.tail(1000)
-                csv_df = pd.concat([head, tail], ignore_index=True)
-            csv_df.to_csv(csv_path, index=False)
-            print(f"Skrev Parquet {len(out_df)} rækker til {pq_path}")
-            print(f"Skrev CSV (sampled) {len(csv_df)} rækker til {csv_path}")
         except Exception as e:
-            raise
+            raise FlatVectorizeError(f"Fejl ved skriv af Parquet til {pq_path}: {e}")
+
+        # CSV: first 1000 + last 1000 rows
+        n = len(out_df)
+        if n <= 2000:
+            csv_df = out_df
+        else:
+            head = out_df.head(1000)
+            tail = out_df.tail(1000)
+            csv_df = pd.concat([head, tail], ignore_index=True)
+        csv_df.to_csv(csv_path, index=False)
+        print(f"Skrev Parquet {len(out_df)} rækker til {pq_path}")
+        print(f"Skrev CSV (sampled) {len(csv_df)} rækker til {csv_path}")
     else:
         if not args.refdate or not args.ticker:
             print("TIP: Uden --all-refdates bør du angive både --ticker og --refdate for et enkelt vindue.\n"
@@ -312,5 +362,13 @@ def main():
         print(f"Skrev Parquet 1 række til {pq_path}")
         print(f"Skrev CSV 1 række til {csv_path}")
 
+def _main_safe():
+    try:
+        main()
+    except FlatVectorizeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        raise SystemExit(2)
+
+
 if __name__ == "__main__":
-    main()
+    _main_safe()
