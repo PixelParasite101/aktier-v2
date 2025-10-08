@@ -3,7 +3,7 @@ import os
 import pytest
 from pathlib import Path
 
-import fetch_history_pro as fh
+from src import fetch_history_pro as fh
 
 
 def test_save_prices_parquet_error(monkeypatch, tmp_path: Path):

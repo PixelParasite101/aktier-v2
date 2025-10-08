@@ -1,49 +1,40 @@
 {
-  // VS Code Run/Debug configurations
+  // VS Code launch configurations for running fetch_history_pro
+  // Use the Python extension's "Run" and "Debug" with these presets.
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run fetch (preset standard)",
-      "type": "debugpy",
+      "name": "Fetch: Validate-only (preset=standard)",
+      "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/fetch_history_pro.py",
-      "args": ["--preset", "standard"],
-      "console": "integratedTerminal"
+      "module": "src.fetch_history_pro",
+      "args": ["--preset", "standard", "--validate-only"],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}"},
+      "console": "integratedTerminal",
+      "justMyCode": false
     },
     {
-      "name": "Run features (preset standard)",
-      "type": "debugpy",
+      "name": "Fetch: Dry-run (in-RAM, no writes)",
+      "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/compute_features.py",
-      "args": ["--preset", "standard"],
-      "console": "integratedTerminal"
+      "module": "src.fetch_history_pro",
+      "args": ["--preset", "standard", "--dry-run", "--batch-size", "5"],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}"},
+      "console": "integratedTerminal",
+      "justMyCode": false
     },
     {
-      "name": "Run rebased (preset standard)",
-      "type": "debugpy",
+      "name": "Fetch: Full run (preset=standard)",
+      "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/make_rebased_windows.py",
+      "module": "src.fetch_history_pro",
       "args": ["--preset", "standard"],
-      "console": "integratedTerminal"
-    }
-    ,
-    {
-      "name": "Run analog matcher (watch)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/analog_matcher_watch.py",
-      "args": [
-        "--watch", "${workspaceFolder}/watch.csv",
-        "--ref-dir", "${workspaceFolder}/rebased",
-        "--lookback", "75",
-        "--horizon", "25",
-        "--topn", "10",
-        "--metric", "mse",
-        "--match-cols", "AdjClose_Rebased,MA_20_Rebased,MA_50_Rebased,MA_200_Rebased",
-  "--out-dir", "${workspaceFolder}/analog_out",
-  "--verbose"
-      ],
-      "console": "integratedTerminal"
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}"},
+      "console": "integratedTerminal",
+      "justMyCode": false
     }
   ]
 }

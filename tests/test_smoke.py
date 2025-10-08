@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-from compute_features import add_features, order_columns as order_feature_cols
-from make_rebased_windows import make_windows_for_ticker, order_columns as order_rebased_cols
+from src.compute_features import add_features, order_columns as order_feature_cols
+from src.make_rebased_windows import make_windows_for_ticker, order_columns as order_rebased_cols
 
 
 def test_offline_smoke_end_to_end(tmp_path: Path):

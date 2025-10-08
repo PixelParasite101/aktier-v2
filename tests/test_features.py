@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from compute_features import rsi_wilder, add_features, order_columns
+from src.compute_features import rsi_wilder, add_features, order_columns
 
 
 def test_rsi_wilder_all_gains_is_100():

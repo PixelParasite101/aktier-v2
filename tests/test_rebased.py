@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from make_rebased_windows import make_windows_for_ticker, order_columns
+from src.make_rebased_windows import make_windows_for_ticker, order_columns
 
 
 def _toy_feature_df():

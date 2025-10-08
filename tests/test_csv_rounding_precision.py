@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-import fetch_history_pro as fh
+from src import fetch_history_pro as fh
 from utils.common import round_for_csv
 
 
@@ -17,8 +17,8 @@ def test_round_for_csv_precision_retained_parquet(tmp_path):
         "Volume": [10, 20, 30]
     })
     rounded, fmt = round_for_csv(df, 4, include_cols=["Open","High","Low","Close","AdjClose"])
-    # Ensure rounding applied
-    assert str(rounded.loc[0, "Open"]).endswith("3456")
+    # Ensure rounding applied (rounded value should match rounded(original, 4))
+    assert np.isclose(rounded.loc[0, "Open"], round(df.loc[0, "Open"], 4))
     # Original df remains higher precision
     assert df.loc[0, "Open"] != round(df.loc[0, "Open"], 4) or df.loc[0, "Open"] == 1.123456
     # Write parquet of original and check values intact

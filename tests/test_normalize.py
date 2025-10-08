@@ -1,5 +1,5 @@
 import pandas as pd
-from fetch_history_pro import normalize_prices
+from src.fetch_history_pro import normalize_prices
 
 
 def test_normalize_prices_empty_returns_schema():

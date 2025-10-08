@@ -3,7 +3,7 @@ import pytest
 import sys
 import os
 from pathlib import Path
-import fetch_history_pro as fh
+from src import fetch_history_pro as fh
 
 
 class DummyArgs:
@@ -23,7 +23,7 @@ def test_fail_on_empty(monkeypatch, tmp_path):
 
     # Run main with fail-on-empty=0 expecting exit code 1
     argv = [
-        "fetch_history_pro.py",
+        "src.fetch_history_pro",
         "--input", str(csv_path),
         "--out", str(tmp_path / "out"),
         "--fail-on-empty", "0",
@@ -40,7 +40,7 @@ def test_fail_on_empty(monkeypatch, tmp_path):
 
     # Now actual run (remove --show-config)
     argv_run = [
-        "fetch_history_pro.py",
+        "src.fetch_history_pro",
         "--input", str(csv_path),
         "--out", str(tmp_path / "out2"),
         "--fail-on-empty", "0",

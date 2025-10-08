@@ -1,7 +1,7 @@
 import pandas as pd
 import sys
 from pathlib import Path
-import fetch_history_pro as fh
+from src import fetch_history_pro as fh
 
 
 def test_actions_rounding(monkeypatch, tmp_path):
@@ -34,7 +34,7 @@ def test_actions_rounding(monkeypatch, tmp_path):
 
     out_dir = tmp_path / "out"
     argv = [
-        "fetch_history_pro.py",
+        "src.fetch_history_pro",
         "--input", str(tickers_csv),
         "--out", str(out_dir),
         "--actions",

@@ -2,9 +2,9 @@ import json
 import sys
 from pathlib import Path
 import pandas as pd
-import fetch_history_pro as fh
-import compute_features as cf
-import make_rebased_windows as mr
+from src import fetch_history_pro as fh
+from src import compute_features as cf
+from src import make_rebased_windows as mr
 
 
 def _run_script(module, argv):
@@ -32,8 +32,8 @@ def test_metadata_fetch_features_rebased(tmp_path):
         })}
 
     # Monkeypatch in module namespace
-    import fetch_history_pro as local_fh
-    import make_rebased_windows as local_mr
+    import src.fetch_history_pro as local_fh
+    import src.make_rebased_windows as local_mr
 
     from importlib import reload
     reload(local_fh)
@@ -42,7 +42,7 @@ def test_metadata_fetch_features_rebased(tmp_path):
 
     fetch_out = tmp_path / "data"
     _run_script(local_fh, [
-        "fetch_history_pro.py", "--input", str(tickers_csv), "--out", str(fetch_out), "--batch-size", "5"
+    "src.fetch_history_pro", "--input", str(tickers_csv), "--out", str(fetch_out), "--batch-size", "5"
     ])
 
     meta_fetch = fetch_out / "_meta.json"
@@ -53,7 +53,7 @@ def test_metadata_fetch_features_rebased(tmp_path):
     # Features
     feats_out = tmp_path / "features.parquet"
     _run_script(cf, [
-        "compute_features.py", "--input", str(fetch_out / "history_all.parquet"), "--out", str(feats_out), "--csv", str(tmp_path / "features.csv")
+    "src.compute_features", "--input", str(fetch_out / "history_all.parquet"), "--out", str(feats_out), "--csv", str(tmp_path / "features.csv")
     ])
     meta_features = (feats_out if feats_out.is_dir() else feats_out.parent) / "_meta.json"
     assert meta_features.exists()
@@ -63,7 +63,7 @@ def test_metadata_fetch_features_rebased(tmp_path):
     # Rebased
     rebased_out = tmp_path / "rebased"
     _run_script(mr, [
-        "make_rebased_windows.py", "--input", str(feats_out), "--out", str(rebased_out), "--before", "3", "--after", "1"
+    "src.make_rebased_windows", "--input", str(feats_out), "--out", str(rebased_out), "--before", "3", "--after", "1"
     ])
     meta_rebased = rebased_out / "_meta.json"
     assert meta_rebased.exists()

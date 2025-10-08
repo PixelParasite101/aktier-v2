@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 import types
 
-import fetch_history_pro as fh
+from src import fetch_history_pro as fh
 
 
 class DummyError(Exception):
