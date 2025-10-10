@@ -325,7 +325,13 @@ def main():
                                 spl_csv_df = spl_csv_df.copy()
                                 spl_csv_df["SplitRatio"] = pd.to_numeric(spl_csv_df["SplitRatio"], errors="coerce").round(args.float_dp)
                         if not div_csv_df.empty:
-                            div_csv_df.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=csv_float_format)
+                            # Round dividend CSV to 4 dp
+                            try:
+                                from utils.common import round_for_csv
+                                div_csv_df2, fmt = round_for_csv(div_csv_df, args.float_dp if args.float_dp is not None else 4, include_cols=["Dividend"]) 
+                                div_csv_df2.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=fmt)
+                            except Exception:
+                                div_csv_df.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=csv_float_format)
                             try:
                                 acts["dividends"].to_parquet(os.path.join(args.out, f"{t}_dividends.parquet"), index=False, compression=args.compression)
                             except Exception as e:
@@ -333,7 +339,13 @@ def main():
                                 logger.error(msg.strip())
                                 log_event(args.log_file, {"event": "parquet_fail_dividends", "ticker": t, "error": str(e)})
                         if not spl_csv_df.empty:
-                            spl_csv_df.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=csv_float_format)
+                            # Round splits CSV to 4 dp
+                            try:
+                                from utils.common import round_for_csv
+                                spl_csv_df2, fmt2 = round_for_csv(spl_csv_df, args.float_dp if args.float_dp is not None else 4, include_cols=["SplitRatio"]) 
+                                spl_csv_df2.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=fmt2)
+                            except Exception:
+                                spl_csv_df.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=csv_float_format)
                             try:
                                 acts["splits"].to_parquet(os.path.join(args.out, f"{t}_splits.parquet"), index=False, compression=args.compression)
                             except Exception as e:

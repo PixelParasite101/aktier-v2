@@ -167,10 +167,18 @@ def main():
     feats = order_columns(feats)
     write_parquet(feats, args.out, args.partition_by)
     if args.csv:
-        numeric_cols = [c for c in feats.columns if pd.api.types.is_numeric_dtype(feats[c])]
-        feats_csv, csv_float_format = round_for_csv(feats, args.float_dp, include_cols=numeric_cols)
-        feats_csv = order_columns(feats_csv)
-        feats_csv.to_csv(args.csv, index=False, float_format=csv_float_format)
+        # write sampled+rounded CSV (first head + last tail rows)
+        try:
+            from utils.common import sample_and_round_df_to_csv
+            # ensure ordering preserved in CSV
+            feats_out = order_columns(feats)
+            sample_and_round_df_to_csv(feats_out, args.csv, head=getattr(args, 'float_dp', 1000) and 1000, tail=1000, float_dp=getattr(args, 'float_dp', 4))
+        except Exception:
+            # fallback to previous behavior
+            numeric_cols = [c for c in feats.columns if pd.api.types.is_numeric_dtype(feats[c])]
+            feats_csv, csv_float_format = round_for_csv(feats, args.float_dp, include_cols=numeric_cols)
+            feats_csv = order_columns(feats_csv)
+            feats_csv.to_csv(args.csv, index=False, float_format=csv_float_format)
     cols_added = [c for c in feats.columns if c.startswith("MA_") or c.startswith("RSI_")]
     tickers_n = feats["Ticker"].nunique()
     try:

@@ -76,3 +76,50 @@ def write_metadata(directory: str, name: str, args: Optional[object] = None, ext
     return path
 
 __all__ = ["round_for_csv", "write_metadata"]
+
+
+def sample_and_round_df_to_csv(df, csv_path, head: int = 1000, tail: int = 1000, float_dp: int = 4):
+    """Sample head+tail from a dataframe, round numeric columns, and write CSV.
+
+    If df has <= head+tail rows the full dataframe is written. Returns path written.
+    """
+    from pathlib import Path
+
+    p = Path(csv_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    if df is None:
+        # write empty CSV
+        pd.DataFrame().to_csv(p, index=False)
+        return str(p)
+
+    n = len(df)
+    h = max(0, head or 0)
+    t = max(0, tail or 0)
+    if n <= h + t:
+        sample = df.copy()
+    else:
+        sample = pd.concat([df.head(h), df.tail(t)], ignore_index=True)
+
+    numeric_cols = [c for c in sample.columns if pd.api.types.is_numeric_dtype(sample[c])]
+    df_csv, csv_float_format = round_for_csv(sample, float_dp, include_cols=numeric_cols)
+    # atomic write
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    df_csv.to_csv(tmp, index=False, float_format=csv_float_format)
+    try:
+        tmp.replace(p)
+    except Exception:
+        # fallback
+        df_csv.to_csv(p, index=False, float_format=csv_float_format)
+    return str(p)
+
+
+def sample_and_round_parquet_to_csv(parquet_path, csv_path, head: int = 1000, tail: int = 1000, float_dp: int = 4):
+    """Read parquet, sample head+tail, round numeric columns and write CSV."""
+    from pathlib import Path
+
+    p = Path(parquet_path)
+    if not p.exists():
+        raise FileNotFoundError(parquet_path)
+    df = pd.read_parquet(p)
+    return sample_and_round_df_to_csv(df, csv_path, head=head, tail=tail, float_dp=float_dp)

@@ -312,17 +312,26 @@ def main():
         except Exception as e:
             raise FlatVectorizeError(f"Fejl ved skriv af Parquet til {pq_path}: {e}")
 
-        # CSV: first 1000 + last 1000 rows
-        n = len(out_df)
-        if n <= 2000:
-            csv_df = out_df
-        else:
-            head = out_df.head(1000)
-            tail = out_df.tail(1000)
-            csv_df = pd.concat([head, tail], ignore_index=True)
-        csv_df.to_csv(csv_path, index=False)
-        print(f"Skrev Parquet {len(out_df)} rækker til {pq_path}")
-        print(f"Skrev CSV (sampled) {len(csv_df)} rækker til {csv_path}")
+        # CSV: first 1000 + last 1000 rows; write numeric columns rounded to 4 decimals
+        try:
+            from utils.common import sample_and_round_parquet_to_csv
+            sample_and_round_parquet_to_csv(pq_path, csv_path, head=1000, tail=1000, float_dp=4)
+            # approximate count for message
+            n = len(out_df)
+            print(f"Skrev Parquet {len(out_df)} rækker til {pq_path}")
+            print(f"Skrev CSV (sampled) (head+tail) til {csv_path}")
+        except Exception:
+            # fallback: previous behavior
+            n = len(out_df)
+            if n <= 2000:
+                csv_df = out_df
+            else:
+                head = out_df.head(1000)
+                tail = out_df.tail(1000)
+                csv_df = pd.concat([head, tail], ignore_index=True)
+            csv_df.to_csv(csv_path, index=False)
+            print(f"Skrev Parquet {len(out_df)} rækker til {pq_path}")
+            print(f"Skrev CSV (sampled) {len(csv_df)} rækker til {csv_path}")
     else:
         if not args.refdate or not args.ticker:
             print("TIP: Uden --all-refdates bør du angive både --ticker og --refdate for et enkelt vindue.\n"
@@ -358,7 +367,14 @@ def main():
             csv_path = out_p.with_suffix('.csv')
             out_p.parent.mkdir(parents=True, exist_ok=True)
         out_df.to_parquet(pq_path, index=False, compression="snappy")
-        out_df.to_csv(csv_path, index=False)
+        # single-row CSV: round numeric columns to 4 decimals
+        try:
+            from utils.common import round_for_csv
+            numeric_cols = [c for c in out_df.columns if pd.api.types.is_numeric_dtype(out_df[c])]
+            out_df_rounded, float_fmt = round_for_csv(out_df, 4, include_cols=numeric_cols)
+            out_df_rounded.to_csv(csv_path, index=False, float_format=float_fmt)
+        except Exception:
+            out_df.to_csv(csv_path, index=False)
         print(f"Skrev Parquet 1 række til {pq_path}")
         print(f"Skrev CSV 1 række til {csv_path}")
 

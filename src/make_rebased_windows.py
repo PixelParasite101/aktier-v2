@@ -652,15 +652,27 @@ def main():
                 full_csv = Path(args.out) / f"{ticker}_rebased.csv"
                 _upsert_full_csv(full_csv, rebased, key_cols=["Ticker", "RefDate", "Offset"], float_dp=getattr(args, "float_dp", None))
 
-                # 2) Samplet CSV afledt af fuld CSV
+                # 2) Sampled CSV derived from full CSV (use helper)
                 h = getattr(args, "csv_head", None)
                 t = getattr(args, "csv_tail", None)
-                if h is not None or t is not None:
+                try:
+                    from utils.common import sample_and_round_df_to_csv, sample_and_round_parquet_to_csv
                     sampled_csv = Path(args.out) / f"{ticker}_rebased.sampled.csv"
-                    _write_sampled_csv_from_full(full_csv, sampled_csv, h, t)
+                    # prefer parquet sidecar if exists
+                    pq_candidate = Path(args.out) / f"{ticker}_rebased.parquet"
+                    if pq_candidate.exists():
+                        sample_and_round_parquet_to_csv(pq_candidate, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
+                    else:
+                        sample_and_round_df_to_csv(rebased, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
                     print(f"  -> updated sampled CSV at {sampled_csv}")
-                else:
-                    print(f"  -> updated full CSV at {full_csv}")
+                except Exception:
+                    # fallback to previous behavior
+                    if h is not None or t is not None:
+                        sampled_csv = Path(args.out) / f"{ticker}_rebased.sampled.csv"
+                        _write_sampled_csv_from_full(full_csv, sampled_csv, h, t)
+                        print(f"  -> updated sampled CSV at {sampled_csv}")
+                    else:
+                        print(f"  -> updated full CSV at {full_csv}")
 
                 if getattr(args, "debug", False):
                     print("DEBUG: per-ticker full_csv=", full_csv)
@@ -700,12 +712,22 @@ def main():
 
             h = getattr(args, "csv_head", None)
             t = getattr(args, "csv_tail", None)
-            if h is not None or t is not None:
+            try:
+                from utils.common import sample_and_round_df_to_csv, sample_and_round_parquet_to_csv
                 sampled_csv = Path(args.out) / "rebased_all.sampled.csv"
-                _write_sampled_csv_from_full(full_csv, sampled_csv, h, t)
+                pq_candidate = Path(args.out) / "rebased_all.parquet"
+                if pq_candidate.exists():
+                    sample_and_round_parquet_to_csv(pq_candidate, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
+                else:
+                    sample_and_round_df_to_csv(combined, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
                 print(f"Saved sampled combined CSV at {sampled_csv}")
-            else:
-                print(f"Saved full combined CSV at {full_csv}")
+            except Exception:
+                if h is not None or t is not None:
+                    sampled_csv = Path(args.out) / "rebased_all.sampled.csv"
+                    _write_sampled_csv_from_full(full_csv, sampled_csv, h, t)
+                    print(f"Saved sampled combined CSV at {sampled_csv}")
+                else:
+                    print(f"Saved full combined CSV at {full_csv}")
 
             if getattr(args, "debug", False):
                 print("DEBUG: combined full_csv=", full_csv)
