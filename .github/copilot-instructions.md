@@ -14,6 +14,7 @@ This repo is a small, test-backed pipeline for daily stock data: fetch -> featur
 
 ## Conventions that matter
 - CSV rounding only: use utils.common.round_for_csv(float_dp) for CSV; keep full precision for Parquet.
+ - CSV policy (new): sampled CSVs are produced from Parquet using the first 1000 + last 1000 rows (if total > 2000) and numeric columns are rounded to 4 decimal places. Use helpers in `utils.common` (sample_and_round_parquet_to_csv / sample_and_round_df_to_csv) to follow this standard.
 - Required columns by stage: fetch -> {Ticker, Date, Open, High, Low, Close, AdjClose, Volume}. Rebased adds RefDate, Offset, and *_Rebased columns.
 - Column order helpers: compute_features.order_columns, make_rebased_windows.order_columns; tests rely on these.
 - Presets: Each CLI supports --preset standard with smart defaults and --show-config/--config-out to resolve final args without running.
