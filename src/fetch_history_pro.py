@@ -45,6 +45,8 @@ def parse_args():
     p.add_argument("--adjusted-only", action="store_true", help="Gem kun AdjClose som Close.")
     p.add_argument("--compression", default="snappy", help="Parquet-kompression: snappy|zstd|gzip.")
     p.add_argument("--partition-by", default=None, help="Parquet-partitionering, fx 'Ticker'. (kun samlet tilstand)")
+    p.add_argument("--csv-head", type=int, help="Hvor mange rækker fra starten at inkludere i sample CSV (default=1000)")
+    p.add_argument("--csv-tail", type=int, help="Hvor mange rækker fra slutningen at inkludere i sample CSV (default=1000)")
     p.add_argument("--only", default=None, help="Kun disse tickers (kommasepareret).")
     p.add_argument("--validate-only", action="store_true", help="Valider input og net—ingen downloads.")
     p.add_argument("--dry-run", action="store_true", help="Download i RAM, men skriv ikke til disk.")
@@ -224,7 +226,7 @@ def batch_download(tickers: List[str]) -> Dict[str, pd.DataFrame]:
         out[t] = normalize_prices(sub, t) if isinstance(sub, pd.DataFrame) else normalize_prices(pd.DataFrame(), t)
     return out
 
-def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: str, partition_by: Optional[str], float_dp: Optional[int]):
+def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: str, partition_by: Optional[str], float_dp: Optional[int], csv_head: Optional[int] = None, csv_tail: Optional[int] = None):
     cols_to_round = [c for c in ["Open","High","Low","Close","AdjClose"] if c in df.columns]
     df_csv, csv_float_format = round_for_csv(df, float_dp, include_cols=cols_to_round)
     if per_ticker:
@@ -237,7 +239,23 @@ def save_prices(df: pd.DataFrame, out_dir: str, per_ticker: bool, compression: s
             log_event(None, {"event": "parquet_fail_per_ticker", "ticker": tick, "error": str(e)})
         return
     csv_path = os.path.join(out_dir, "history_all.csv")
-    df_csv.to_csv(csv_path, index=False, float_format=csv_float_format)
+    # For combined output prefer sampled+rounded CSV (head+tail) to keep CSV small
+    try:
+        from utils.common import sample_and_round_df_to_csv
+        head = csv_head or 1000
+        tail = csv_tail or 1000
+        # write parquet first (canonical)
+        if partition_by:
+            pq_dir = os.path.join(out_dir, "history_all_parquet")
+            df.to_parquet(pq_dir, index=False, compression=compression, partition_cols=[partition_by])
+        else:
+            pq_path = os.path.join(out_dir, "history_all.parquet")
+            df.to_parquet(pq_path, index=False, compression=compression)
+        # now write sampled/rounded CSV from dataframe
+        sample_and_round_df_to_csv(df, csv_path, head=head, tail=tail, float_dp=float_dp or 4)
+    except Exception:
+        # fallback: write CSV directly
+        df_csv.to_csv(csv_path, index=False, float_format=csv_float_format)
     try:
         if partition_by:
             pq_dir = os.path.join(out_dir, "history_all_parquet")
@@ -363,7 +381,7 @@ def main():
         if args.incremental and existing_all is not None:
             all_df = incremental_merge(existing_all, all_df)
         if not args.dry_run:
-            save_prices(all_df, args.out, per_ticker=False, compression=args.compression, partition_by=args.partition_by, float_dp=args.float_dp)
+            save_prices(all_df, args.out, per_ticker=False, compression=args.compression, partition_by=args.partition_by, float_dp=args.float_dp, csv_head=getattr(args, 'csv_head', None), csv_tail=getattr(args, 'csv_tail', None))
     empty_n = sum(1 for f in report["failed"] if f.get("reason") == "empty")
     report["summary"] = {"tickers_total": n, "tickers_ok": len(report["ok"]), "tickers_failed": len(report["failed"]), "empty_series": empty_n, "out_dir": args.out, "per_ticker": bool(args.per_ticker), "incremental": bool(args.incremental), "actions": bool(args.actions), "adjusted_only": bool(args.adjusted_only), "dry_run": bool(args.dry_run)}
     if not args.dry_run:
