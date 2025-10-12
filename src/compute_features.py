@@ -28,6 +28,8 @@ def parse_args():
     p.add_argument("--input", "-i", required=False, default=None, help="Sti til input (CSV eller Parquet).")
     p.add_argument("--out", "-o", required=False, default=None, help="Sti til output Parquet-fil eller mappe (ved partitionering).")
     p.add_argument("--csv", help="(Valgfrit) Skriv også en CSV-kopi hertil.")
+    p.add_argument("--csv-head", type=int, help="Hvor mange rækker fra starten at inkludere i sample CSV (default=1000)")
+    p.add_argument("--csv-tail", type=int, help="Hvor mange rækker fra slutningen at inkludere i sample CSV (default=1000)")
     p.add_argument("--ma", nargs="+", type=int, default=[20, 50, 200], help="MA-vinduer (dage). Default: 20 50 200")
     p.add_argument("--rsi", type=int, default=14, help="RSI-længde. Default: 14")
     p.add_argument("--use-adjclose", action="store_true", help="Beregn indikatorer på AdjClose i stedet for Close.")
@@ -172,7 +174,9 @@ def main():
             from utils.common import sample_and_round_df_to_csv
             # ensure ordering preserved in CSV
             feats_out = order_columns(feats)
-            sample_and_round_df_to_csv(feats_out, args.csv, head=getattr(args, 'float_dp', 1000) and 1000, tail=1000, float_dp=getattr(args, 'float_dp', 4))
+            head = getattr(args, 'csv_head', None) or 1000
+            tail = getattr(args, 'csv_tail', None) or 1000
+            sample_and_round_df_to_csv(feats_out, args.csv, head=head, tail=tail, float_dp=getattr(args, 'float_dp', 4))
         except Exception:
             # fallback to previous behavior
             numeric_cols = [c for c in feats.columns if pd.api.types.is_numeric_dtype(feats[c])]

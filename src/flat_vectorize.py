@@ -42,6 +42,8 @@ def parse_args():
                    help="Skalering pr. vindue: none | zscore | minmax (default: none)")
     p.add_argument("--preset", choices=["standard"], default=None, help="Forudindstillet kørsel: standard")
     p.add_argument("--show-config", action="store_true", help="Print den endelige konfiguration (efter preset) som JSON og exit.")
+    p.add_argument("--csv-head", type=int, help="Hvor mange rækker fra starten at inkludere i sample CSV (default=1000)")
+    p.add_argument("--csv-tail", type=int, help="Hvor mange rækker fra slutningen at inkludere i sample CSV (default=1000)")
     return p.parse_args()
 
 
@@ -315,7 +317,9 @@ def main():
         # CSV: first 1000 + last 1000 rows; write numeric columns rounded to 4 decimals
         try:
             from utils.common import sample_and_round_parquet_to_csv
-            sample_and_round_parquet_to_csv(pq_path, csv_path, head=1000, tail=1000, float_dp=4)
+            head = getattr(args, 'csv_head', None) or 1000
+            tail = getattr(args, 'csv_tail', None) or 1000
+            sample_and_round_parquet_to_csv(pq_path, csv_path, head=head, tail=tail, float_dp=4)
             # approximate count for message
             n = len(out_df)
             print(f"Skrev Parquet {len(out_df)} rækker til {pq_path}")
