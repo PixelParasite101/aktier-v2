@@ -116,7 +116,11 @@ def run_full_pipeline(input_csv: str, fetch_out: str, features_out: str, rebased
     else:
         csv_input = rebased_out
 
-    flat_cmd = [PY, "-m", "src.flat_vectorize", "--csv", csv_input, "--out", flat_out]
+    # Run the script implementation in src directly (no top-level wrapper)
+    import os as _os
+    repo_root = _os.path.dirname(_os.path.dirname(__file__))
+    src_flat = _os.path.join(repo_root, "src", "flat_vectorize.py")
+    flat_cmd = [PY, src_flat, "--csv", csv_input, "--out", flat_out]
     flat_cmd += build_common_flags(args, flat_allowed)
     if getattr(args, "all_refdates", False) and "--all-refdates" not in flat_cmd:
         flat_cmd += ["--all-refdates"]
