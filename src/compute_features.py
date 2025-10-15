@@ -15,6 +15,7 @@ if proj_root not in sys.path:
 import argparse
 import os
 from typing import List, Optional
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -74,13 +75,36 @@ def apply_preset(args):
     return args
 
 def read_input(path: str) -> pd.DataFrame:
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".parquet" or os.path.isdir(path):
-        df = pd.read_parquet(path)
-    elif ext == ".csv":
-        df = pd.read_csv(path)
+    p = Path(path)
+    # If a directory: prefer explicit parquet files (concat) to avoid pyarrow
+    # trying to treat unrelated files (like .csv actions) as parquet dataset.
+    if p.is_dir():
+        # If there is a combined history file, prefer it (backwards-compatible fetch output)
+        history_pq = p / "history_all.parquet"
+        history_csv = p / "history_all.csv"
+        if history_pq.exists():
+            df = pd.read_parquet(history_pq)
+        elif history_csv.exists():
+            df = pd.read_csv(history_csv)
+        else:
+            pq_files = sorted(p.glob("*.parquet"))
+            if pq_files:
+                parts = [pd.read_parquet(f) for f in pq_files]
+                df = pd.concat(parts, ignore_index=True)
+            else:
+                csv_files = sorted(p.glob("*.csv"))
+                if not csv_files:
+                    raise FileNotFoundError(f"Ingen .parquet eller .csv filer i mappen: {p}")
+                parts = [pd.read_csv(f) for f in csv_files]
+                df = pd.concat(parts, ignore_index=True)
     else:
-        raise ValueError("Input skal være .csv, .parquet eller en parquet-mappe.")
+        ext = p.suffix.lower()
+        if ext == ".parquet":
+            df = pd.read_parquet(path)
+        elif ext == ".csv":
+            df = pd.read_csv(path)
+        else:
+            raise ValueError("Input skal være .csv, .parquet eller en parquet-mappe.")
     need = {"Ticker","Date","Close","AdjClose"}
     missing = need - set(df.columns)
     if missing:

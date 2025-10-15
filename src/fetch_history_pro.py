@@ -343,29 +343,66 @@ def main():
                                 spl_csv_df = spl_csv_df.copy()
                                 spl_csv_df["SplitRatio"] = pd.to_numeric(spl_csv_df["SplitRatio"], errors="coerce").round(args.float_dp)
                         if not div_csv_df.empty:
+                            # ensure actions subfolder
+                            actions_dir = os.path.join(args.out, "actions")
+                            os.makedirs(actions_dir, exist_ok=True)
+                            csv_path = os.path.join(actions_dir, f"{t}_dividends.csv")
+                            parquet_path = os.path.join(actions_dir, f"{t}_dividends.parquet")
                             # Round dividend CSV to 4 dp
                             try:
                                 from utils.common import round_for_csv
                                 div_csv_df2, fmt = round_for_csv(div_csv_df, args.float_dp if args.float_dp is not None else 4, include_cols=["Dividend"]) 
-                                div_csv_df2.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=fmt)
+                                div_csv_df2.to_csv(csv_path, index=False, float_format=fmt)
+                                # Backwards-compatible write to previous location
+                                try:
+                                    div_csv_df2.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=fmt)
+                                except Exception:
+                                    pass
                             except Exception:
-                                div_csv_df.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=csv_float_format)
+                                div_csv_df.to_csv(csv_path, index=False, float_format=csv_float_format)
+                                try:
+                                    div_csv_df.to_csv(os.path.join(args.out, f"{t}_dividends.csv"), index=False, float_format=csv_float_format)
+                                except Exception:
+                                    pass
                             try:
-                                acts["dividends"].to_parquet(os.path.join(args.out, f"{t}_dividends.parquet"), index=False, compression=args.compression)
+                                acts["dividends"].to_parquet(parquet_path, index=False, compression=args.compression)
+                                # Backwards-compatible parquet
+                                try:
+                                    acts["dividends"].to_parquet(os.path.join(args.out, f"{t}_dividends.parquet"), index=False, compression=args.compression)
+                                except Exception:
+                                    pass
                             except Exception as e:
                                 msg = f"Parquet-fejl (dividends) for {t}: {e}\n"
                                 logger.error(msg.strip())
                                 log_event(args.log_file, {"event": "parquet_fail_dividends", "ticker": t, "error": str(e)})
                         if not spl_csv_df.empty:
+                            # ensure actions subfolder
+                            actions_dir = os.path.join(args.out, "actions")
+                            os.makedirs(actions_dir, exist_ok=True)
+                            csv_path = os.path.join(actions_dir, f"{t}_splits.csv")
+                            parquet_path = os.path.join(actions_dir, f"{t}_splits.parquet")
                             # Round splits CSV to 4 dp
                             try:
                                 from utils.common import round_for_csv
                                 spl_csv_df2, fmt2 = round_for_csv(spl_csv_df, args.float_dp if args.float_dp is not None else 4, include_cols=["SplitRatio"]) 
-                                spl_csv_df2.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=fmt2)
+                                spl_csv_df2.to_csv(csv_path, index=False, float_format=fmt2)
+                                # Backwards-compatible write
+                                try:
+                                    spl_csv_df2.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=fmt2)
+                                except Exception:
+                                    pass
                             except Exception:
-                                spl_csv_df.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=csv_float_format)
+                                spl_csv_df.to_csv(csv_path, index=False, float_format=csv_float_format)
+                                try:
+                                    spl_csv_df.to_csv(os.path.join(args.out, f"{t}_splits.csv"), index=False, float_format=csv_float_format)
+                                except Exception:
+                                    pass
                             try:
-                                acts["splits"].to_parquet(os.path.join(args.out, f"{t}_splits.parquet"), index=False, compression=args.compression)
+                                acts["splits"].to_parquet(parquet_path, index=False, compression=args.compression)
+                                try:
+                                    acts["splits"].to_parquet(os.path.join(args.out, f"{t}_splits.parquet"), index=False, compression=args.compression)
+                                except Exception:
+                                    pass
                             except Exception as e:
                                 msg = f"Parquet-fejl (splits) for {t}: {e}\n"
                                 logger.error(msg.strip())

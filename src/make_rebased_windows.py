@@ -284,11 +284,36 @@ def load_data(path: str) -> pd.DataFrame:
     p = Path(path)
 
     if p.is_dir():
-        # Prefer parquet files if present, otherwise CSV
-        pq_files = sorted(p.glob("*.parquet"))
+        # If there are any parquet files under the directory (including nested
+        # partition dirs), read them individually and concat. This avoids calling
+        # pandas.read_parquet(p) which may try to interpret non-parquet files
+        # in the same folder as parquet dataset files.
+        pq_files = sorted(p.rglob("*.parquet"))
         if pq_files:
-            parts = [pd.read_parquet(f) for f in pq_files]
-            df = pd.concat(parts, ignore_index=True)
+            # If parquet files live in nested partition folders (e.g. Ticker=.../),
+            # let pandas/pyarrow read the directory as a dataset so partition
+            # columns (like 'Ticker') are preserved. If all .parquet files are at
+            # the top level, read them individually and concat.
+            nested = any(f.parent != p for f in pq_files)
+            if nested:
+                # Use pyarrow.dataset to read partitioned parquet directories while
+                # ignoring non-parquet files (like sampled CSVs) that may live in the
+                # same folder. Fallback to pandas.read_parquet on the folder if
+                # pyarrow.dataset is unavailable or fails.
+                try:
+                    import pyarrow.dataset as _ds
+                    tbl = _ds.dataset(str(p), format="parquet").to_table()
+                    df = tbl.to_pandas()
+                except Exception:
+                    try:
+                        df = pd.read_parquet(p)
+                    except Exception:
+                        # Last resort: read individual parquet files
+                        parts = [pd.read_parquet(f) for f in pq_files]
+                        df = pd.concat(parts, ignore_index=True)
+            else:
+                parts = [pd.read_parquet(f) for f in pq_files]
+                df = pd.concat(parts, ignore_index=True)
         else:
             csv_files = sorted(p.glob("*.csv"))
             if not csv_files:
@@ -661,9 +686,21 @@ def main():
                     # prefer parquet sidecar if exists
                     pq_candidate = Path(args.out) / f"{ticker}_rebased.parquet"
                     if pq_candidate.exists():
-                        sample_and_round_parquet_to_csv(pq_candidate, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
+                        sample_and_round_parquet_to_csv(
+                            pq_candidate,
+                            sampled_csv,
+                            head=(h if h is not None else 1000),
+                            tail=(t if t is not None else 1000),
+                            float_dp=getattr(args, "float_dp", 4),
+                        )
                     else:
-                        sample_and_round_df_to_csv(rebased, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
+                        sample_and_round_df_to_csv(
+                            rebased,
+                            sampled_csv,
+                            head=(h if h is not None else 1000),
+                            tail=(t if t is not None else 1000),
+                            float_dp=getattr(args, "float_dp", 4),
+                        )
                     print(f"  -> updated sampled CSV at {sampled_csv}")
                 except Exception:
                     # fallback to previous behavior
@@ -717,9 +754,21 @@ def main():
                 sampled_csv = Path(args.out) / "rebased_all.sampled.csv"
                 pq_candidate = Path(args.out) / "rebased_all.parquet"
                 if pq_candidate.exists():
-                    sample_and_round_parquet_to_csv(pq_candidate, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
+                    sample_and_round_parquet_to_csv(
+                        pq_candidate,
+                        sampled_csv,
+                        head=(h if h is not None else 1000),
+                        tail=(t if t is not None else 1000),
+                        float_dp=getattr(args, "float_dp", 4),
+                    )
                 else:
-                    sample_and_round_df_to_csv(combined, sampled_csv, head=h or 1000, tail=t or 1000, float_dp=getattr(args, 'float_dp', 4))
+                    sample_and_round_df_to_csv(
+                        combined,
+                        sampled_csv,
+                        head=(h if h is not None else 1000),
+                        tail=(t if t is not None else 1000),
+                        float_dp=getattr(args, "float_dp", 4),
+                    )
                 print(f"Saved sampled combined CSV at {sampled_csv}")
             except Exception:
                 if h is not None or t is not None:
